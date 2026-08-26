@@ -169,6 +169,8 @@ const editingGroup = ref<Group | null>(null),
 const configStatus = ref<ConfigStatus | null>(null);
 const subscriptionDetails = ref<Record<string, SubscriptionDetail>>({}),
   expandedSubscriptions = ref<string[]>([]),
+  showSourceModal = ref(false),
+  selectedSubscriptions = ref<string[]>([]),
   probing = ref<string[]>([]),
   probingNodes = ref<string[]>([]),
   probeProgress = ref<Record<string, { done: number; total: number }>>({});
@@ -183,6 +185,12 @@ const navigation = [
 ];
 const enabledNodes = computed(
   () => nodes.value.filter((n) => n.enabled).length,
+);
+const subscriptionTraffic = computed(() =>
+  subscriptions.value.reduce(
+    (sum, sub) => sum + (sub.upload_bytes || 0) + (sub.download_bytes || 0),
+    0,
+  ),
 );
 const newManagerUrl = computed(
   () => `http://${setupForm.value.address.split("/")[0]}:8080/`,
@@ -352,6 +360,7 @@ async function addSubscription() {
     });
     setupSubscription.value.url = "";
     await loadData();
+    showSourceModal.value = false;
     changed("Подписка импортирована. Изменения ещё не применены к Mihomo.");
   } catch (reason) {
     error.value =
@@ -393,6 +402,7 @@ async function addVless() {
         ? "VLESS-узел добавлен. Добавьте его в группу и примените конфигурацию Mihomo."
         : `Добавлено VLESS-узлов: ${imported}. Добавьте их в группу и примените конфигурацию Mihomo.`,
     );
+    if (!failures.length) showSourceModal.value = false;
   }
   if (failures.length)
     error.value = `Не удалось добавить ${failures.length} из ${uris.length}: ${failures
@@ -1267,7 +1277,7 @@ onMounted(async () => {
       </div>
     </aside>
     <main class="content">
-      <header>
+      <header v-if="page !== 'subscriptions'">
         <div>
           <p class="eyebrow">NextGateway · {{ managerAddress }}</p>
           <h1>{{ navigation.find((item) => item[0] === page)?.[1] }}</h1>
@@ -1377,7 +1387,38 @@ onMounted(async () => {
         <iframe title="Zashboard" :src="dashboardUrl"></iframe>
       </section>
       <section v-if="page === 'subscriptions'" class="connections-page">
-        <section class="panel compact-panel">
+        <section class="subscriptions-summary">
+          <div>
+            <small>Общий трафик</small>
+            <strong>⇅ {{ formatBytes(subscriptionTraffic) }}</strong>
+          </div>
+          <div>
+            <small>Всего подписок</small>
+            <strong>◴ {{ subscriptions.length }}</strong>
+          </div>
+          <div>
+            <small>Всего подключений</small>
+            <strong>☷ {{ nodes.length }}</strong>
+          </div>
+        </section>
+        <section class="subscriptions-list-card">
+          <div class="subscriptions-toolbar">
+            <button class="xui-primary" @click="showSourceModal = true">
+              <span>＋</span> Добавить источник
+            </button>
+            <details class="general-actions">
+              <summary class="xui-primary"><span>☰</span> Общие действия</summary>
+              <div>
+                <button @click="showPreview">Предпросмотр конфигурации</button>
+                <button @click="applyRuntime">Применить Mihomo</button>
+                <button @click="loadData">Обновить данные</button>
+              </div>
+            </details>
+            <span v-if="dirty" class="xui-warning">Есть неприменённые изменения</span>
+          </div>
+        </section>
+        <div v-if="showSourceModal" class="modal-backdrop" @click.self="showSourceModal = false">
+          <section class="source-modal" role="dialog" aria-modal="true" aria-label="Добавить источник">
           <div class="panel-title">
             <div>
               <h2>Добавить источник</h2>
@@ -1386,6 +1427,7 @@ onMounted(async () => {
                 месте
               </p>
             </div>
+            <button class="modal-close" aria-label="Закрыть" @click="showSourceModal = false">×</button>
           </div>
           <form
             class="inline-form subscription-source-form"
@@ -1449,25 +1491,47 @@ onMounted(async () => {
               ></textarea></label
             ><button class="primary" type="submit">Добавить</button>
           </form>
-        </section>
+          </section>
+        </div>
         <div v-if="!subscriptions.length && !nodes.length" class="panel empty">
           <strong>Подключений пока нет</strong>
           <p>Добавьте подписку или прямой VLESS URI.</p>
         </div>
         <div v-if="subscriptions.length" class="subscription-table-head">
-          <span></span>
+          <span><input type="checkbox" aria-label="Выбрать все подписки" :checked="selectedSubscriptions.length === subscriptions.length" @change="selectedSubscriptions = selectedSubscriptions.length === subscriptions.length ? [] : subscriptions.map((item) => item.id)" /></span>
+          <span>ID</span>
+          <span>Меню</span>
+          <span>Включено</span>
           <span>Подписка</span>
           <span>Трафик</span>
-          <span>Истекает</span>
           <span>Подключения</span>
-          <span>Состояние</span>
-          <span>Меню</span>
+          <span>Истекает</span>
         </div>
         <article
-          v-for="sub in subscriptions"
+          v-for="(sub, subIndex) in subscriptions"
           :key="sub.id"
           class="subscription-card"
         >
+          <label class="subscription-select"><input v-model="selectedSubscriptions" type="checkbox" :value="sub.id" :aria-label="`Выбрать ${sub.remote_name || sub.name}`" /></label>
+          <span class="subscription-id">{{ subIndex + 1 }}</span>
+          <div class="subscription-actions">
+            <button class="row-edit" title="Обновить подписку" aria-label="Обновить подписку" @click="refreshSubscription(sub)">
+              <svg viewBox="0 0 24 24"><path d="M4 20h4l11-11-4-4L4 16v4M13.5 6.5l4 4" /></svg>
+            </button>
+            <details class="action-menu">
+              <summary title="Действия" aria-label="Действия">⋮</summary>
+              <div>
+                <button @click="probeSubscription(sub)">Проверить подключения</button>
+                <button @click="renameSubscription(sub)">Переименовать</button>
+                <button @click="changeAutoUpdate(sub)">Автообновление</button>
+                <button @click="shareSubscription(sub)">Скопировать ссылку подписки</button>
+                <button @click="updateSubscription(sub, { enabled: !sub.enabled })">{{ sub.enabled ? "Остановить автообновление" : "Включить автообновление" }}</button>
+                <a v-if="sub.support_url" :href="sub.support_url" target="_blank">Поддержка</a>
+                <button class="danger-link" @click="removeSubscription(sub.id)">Удалить</button>
+              </div>
+            </details>
+          </div>
+          <button class="xui-switch" :class="{ checked: sub.enabled }" :aria-label="sub.enabled ? 'Выключить подписку' : 'Включить подписку'" @click="updateSubscription(sub, { enabled: !sub.enabled })"><i></i></button>
           <header class="subscription-head">
             <button
               class="expand"
@@ -1489,59 +1553,6 @@ onMounted(async () => {
                 ч.</small
               >
             </div>
-            <div class="subscription-actions">
-              <button
-                class="icon-action"
-                title="Обновить подписку"
-                @click="refreshSubscription(sub)"
-              >
-                <svg viewBox="0 0 24 24">
-                  <path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6" />
-                </svg></button
-              ><button
-                class="icon-action"
-                title="Проверить все подключения"
-                :disabled="probing.includes(sub.id)"
-                @click="probeSubscription(sub)"
-              >
-                <svg viewBox="0 0 24 24">
-                  <path d="M4 15a8 8 0 1 1 16 0M12 15l4-4M6 19h12" />
-                </svg>
-              </button>
-              <span v-if="probeProgress[sub.id]" class="probe-progress">
-                {{ probeProgress[sub.id].done }}/{{
-                  probeProgress[sub.id].total
-                }}
-              </span>
-              <details class="action-menu">
-                <summary title="Действия">•••</summary>
-                <div>
-                  <button @click="renameSubscription(sub)">Переименовать</button
-                  ><button @click="changeAutoUpdate(sub)">Автообновление</button
-                  ><button @click="shareSubscription(sub)">
-                    Скопировать ссылку подписки</button
-                  ><button
-                    @click="updateSubscription(sub, { enabled: !sub.enabled })"
-                  >
-                    {{
-                      sub.enabled
-                        ? "Остановить автообновление"
-                        : "Включить автообновление"
-                    }}</button
-                  ><a
-                    v-if="sub.support_url"
-                    :href="sub.support_url"
-                    target="_blank"
-                    >Поддержка</a
-                  ><button
-                    class="danger-link"
-                    @click="removeSubscription(sub.id)"
-                  >
-                    Удалить
-                  </button>
-                </div>
-              </details>
-            </div>
           </header>
           <div class="subscription-meta">
             <div>
@@ -1559,25 +1570,14 @@ onMounted(async () => {
               </div>
             </div>
             <div>
-              <span>Истекает</span
-              ><b>{{
-                sub.expires_at ? formatDate(sub.expires_at) : "без ограничения"
-              }}</b>
+              <b>{{ sub.nodes_count }}</b>
             </div>
-            <div>
-              <span>Подключения</span><b>{{ sub.nodes_count }}</b>
-            </div>
-            <span
-              :class="sub.last_error ? 'bad' : sub.enabled ? 'ok' : 'muted'"
-              >{{
-                sub.last_error ||
-                (sub.enabled
-                  ? "автообновление включено"
-                  : "автообновление остановлено")
-              }}</span
-            >
+            <div><b>{{ sub.expires_at ? formatDate(sub.expires_at) : "∞" }}</b></div>
           </div>
-          <p v-if="sub.announcement" class="announcement">
+          <p
+            v-if="sub.announcement && expandedSubscriptions.includes(sub.id)"
+            class="announcement"
+          >
             {{ sub.announcement }}
           </p>
           <div
@@ -1656,7 +1656,7 @@ onMounted(async () => {
         </article>
         <article
           v-if="nodes.some((node) => node.source === 'manual')"
-          class="subscription-card"
+          class="subscription-card manual-card"
         >
           <header class="subscription-head">
             <div class="subscription-title">
@@ -2640,20 +2640,131 @@ button:disabled {
   background: #292b31;
 }
 .connections-page {
-  gap: 0;
+  gap: 12px;
   padding: 0;
   overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.subscriptions-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  padding: 27px 28px;
   border: 1px solid #34363d;
+  border-radius: 12px;
+  background: #23252b;
+  box-shadow: 0 2px 8px #0002;
+}
+.subscriptions-summary div {
+  display: grid;
+  gap: 7px;
+}
+.subscriptions-summary small {
+  color: #aaaeb7;
+  font-size: 12px;
+}
+.subscriptions-summary strong {
+  font-size: 17px;
+  font-weight: 500;
+}
+.subscriptions-list-card {
+  overflow: visible;
+  border: 1px solid #34363d;
+  border-radius: 12px 12px 0 0;
+  background: #23252b;
+  box-shadow: 0 2px 8px #0002;
+}
+.subscriptions-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 56px;
+  padding: 10px 24px;
+  border-bottom: 1px solid #34363d;
+}
+.xui-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 15px;
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  background: #1677ff;
+  font-size: 14px;
+}
+.general-actions {
+  position: relative;
+}
+.general-actions summary {
+  list-style: none;
+}
+.general-actions > div,
+.action-menu > div {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 5px);
+  min-width: 210px;
+  padding: 4px;
+  border: 1px solid #3d4048;
+  border-radius: 7px;
+  background: #2b2d33;
+  box-shadow: 0 6px 20px #0007;
+}
+.general-actions button,
+.action-menu > div button,
+.action-menu > div a {
+  display: block;
+  width: 100%;
+  padding: 8px 11px;
+  color: #e4e6eb;
+  text-align: left;
+  text-decoration: none;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+}
+.general-actions button:hover,
+.action-menu > div button:hover,
+.action-menu > div a:hover {
+  color: #4096ff;
+  background: #173253;
+}
+.xui-warning {
+  margin-left: auto;
+  color: #d89614;
+  font-size: 11px;
+}
+.modal-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #0009;
+}
+.source-modal {
+  width: min(860px, 100%);
+  max-height: calc(100vh - 48px);
+  padding: 20px 24px;
+  overflow: auto;
+  border: 1px solid #3d4048;
   border-radius: 10px;
   background: #23252b;
+  box-shadow: 0 12px 48px #000a;
 }
-.connections-page > .compact-panel {
-  margin: 0;
-  padding: 14px 16px;
+.modal-close {
+  color: #b9bdc6;
   border: 0;
-  border-bottom: 1px solid #34363d;
-  border-radius: 10px 10px 0 0;
   background: transparent;
+  cursor: pointer;
+  font-size: 25px;
 }
 .compact-panel .inline-form {
   border-color: #3b3e46;
@@ -2670,44 +2781,49 @@ button:disabled {
 .subscription-table-head,
 .subscription-card {
   display: grid;
-  grid-template-columns: 36px minmax(155px, 1.5fr) minmax(95px, 0.8fr) minmax(105px, 0.9fr) 100px minmax(105px, 0.8fr) 96px;
+  grid-template-columns: 42px 52px 72px 82px minmax(220px, 1.4fr) 140px 110px 150px;
   align-items: center;
-  column-gap: 6px;
 }
 .subscription-table-head {
-  min-width: 760px;
-  margin: 16px 16px 0;
-  padding: 10px 12px;
-  color: #d4d7dd;
+  min-width: 870px;
+  margin: -12px 0 0;
+  padding: 0 24px;
+  color: #e3e5e9;
   border-bottom: 1px solid #444750;
+  border-radius: 0;
   background: #292b31;
   font-size: 12px;
   font-weight: 600;
 }
 .subscription-table-head span {
-  min-width: 0;
-  padding: 0 4px;
-  font-size: 10px;
-  overflow-wrap: anywhere;
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border-right: 1px solid #444750;
+  font-size: 12px;
 }
 .subscription-card {
-  min-width: 760px;
-  margin: 0 16px;
+  min-width: 870px;
+  margin: -12px 0 0;
+  padding: 0 24px;
   border: 0;
   border-bottom: 1px solid #3b3e46;
   border-radius: 0;
-  background: transparent;
+  background: #23252b;
 }
 .subscription-head {
-  display: contents;
+  display: flex;
+  grid-column: 5;
+  align-items: center;
+  min-width: 0;
 }
 .subscription-head .expand {
-  grid-column: 1;
-  margin-left: 8px;
+  margin-right: 7px;
 }
 .subscription-title {
-  grid-column: 2;
-  padding: 12px 8px;
+  padding: 10px 4px;
 }
 .subscription-title h2 {
   font-size: 14px;
@@ -2716,52 +2832,100 @@ button:disabled {
   font-size: 10px;
 }
 .subscription-actions {
-  grid-column: 7;
-  justify-self: end;
-  padding-right: 8px;
-  gap: 5px;
+  grid-column: 3;
+  display: flex;
+  justify-content: center;
+  gap: 1px;
 }
 .subscription-meta {
   display: contents;
 }
 .subscription-meta > div:nth-child(1) {
-  grid-column: 3;
+  grid-column: 6;
 }
 .subscription-meta > div:nth-child(2) {
-  grid-column: 4;
+  grid-column: 7;
 }
 .subscription-meta > div:nth-child(3) {
-  grid-column: 5;
-}
-.subscription-meta > span {
-  grid-column: 6;
-  padding-right: 8px;
-  font-size: 10px;
+  grid-column: 8;
 }
 .subscription-meta > div {
-  padding: 12px 8px;
+  padding: 10px 8px;
+  text-align: center;
 }
 .subscription-meta span,
 .subscription-meta b {
   font-size: 11px;
 }
 .expand,
-.icon-action,
+.row-edit,
 .action-menu summary {
-  width: 28px;
-  height: 28px;
-  border-color: #464952;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  color: #d7dae0;
+  border: 0;
   border-radius: 5px;
-  background: #292b31;
+  background: transparent;
+  cursor: pointer;
 }
 .expand svg,
-.icon-action svg {
+.row-edit svg {
   width: 15px;
   height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+}
+.subscription-select,
+.subscription-id {
+  justify-self: center;
+}
+.xui-switch {
+  position: relative;
+  grid-column: 4;
+  width: 44px;
+  height: 22px;
+  justify-self: center;
+  border: 0;
+  border-radius: 11px;
+  cursor: pointer;
+  background: #555963;
+}
+.xui-switch i {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform .18s ease;
+}
+.xui-switch.checked {
+  background: #1677ff;
+}
+.xui-switch.checked i {
+  transform: translateX(22px);
 }
 .announcement,
 .subscription-nodes {
   grid-column: 1 / -1;
+}
+.manual-card {
+  display: block;
+  margin-top: 0;
+  padding: 0;
+}
+.manual-card .subscription-head {
+  display: flex;
+  padding: 8px 16px;
+}
+.manual-card .subscription-actions {
+  display: flex;
+  margin-left: auto;
 }
 .announcement {
   margin: 0;
