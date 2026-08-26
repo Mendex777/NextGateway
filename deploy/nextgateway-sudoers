@@ -1,0 +1,1 @@
+nextgateway ALL=(root) NOPASSWD: /usr/bin/systemd-run --pipe --wait --collect --quiet /opt/nextgateway/venv/bin/nextgateway-helper *

@@ -1,0 +1,2 @@
+"""NextGateway application package."""
+

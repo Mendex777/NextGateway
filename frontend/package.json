@@ -1,0 +1,21 @@
+{
+  "name": "nextgateway-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vue-tsc --noEmit && vite build",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "@twemoji/svg": "^15.0.0",
+    "@vitejs/plugin-vue": "6.0.8",
+    "vite": "8.2.2",
+    "vue": "3.5.41"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vue-tsc": "3.3.11"
+  }
+}

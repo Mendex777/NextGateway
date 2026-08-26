@@ -1,0 +1,15 @@
+.venv/
+.deploy/
+.secrets/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.db
+*.db-*
+node_modules/
+frontend/dist/
+dist-release/
+*.tsbuildinfo
+.env
+*.log

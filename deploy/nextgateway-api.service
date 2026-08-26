@@ -1,0 +1,28 @@
+[Unit]
+Description=NextGateway API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nextgateway
+Group=nextgateway
+UMask=0077
+WorkingDirectory=/var/lib/nextgateway
+Environment=NEXTGATEWAY_DATABASE_URL=sqlite:////var/lib/nextgateway/nextgateway.db
+Environment=NEXTGATEWAY_SYSTEM_MUTATIONS_ENABLED=true
+Environment=NEXTGATEWAY_FRONTEND_DIST=/opt/nextgateway/source/frontend/dist
+Environment=NEXTGATEWAY_ZASHBOARD_DIST=/opt/nextgateway/zashboard
+ExecStart=/opt/nextgateway/venv/bin/uvicorn nextgateway.main:app --host 192.168.1.84 --port 8080
+Restart=on-failure
+RestartSec=3
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nextgateway /var/lib/nextgateway-system /etc/netplan /etc/mihomo
+ReadWritePaths=-/run/netplan /run/systemd/network /run/systemd/system /run/udev/rules.d
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_AUDIT_WRITE CAP_NET_RAW
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

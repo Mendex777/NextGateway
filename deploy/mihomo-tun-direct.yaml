@@ -1,0 +1,21 @@
+mode: rule
+log-level: info
+ipv6: false
+allow-lan: false
+find-process-mode: "off"
+interface-name: ens18
+external-controller: 127.0.0.1:9090
+tun:
+  enable: true
+  device: mihomo
+  stack: mixed
+  auto-route: true
+  auto-redirect: true
+  strict-route: true
+  auto-detect-interface: false
+  route-exclude-address:
+    - 192.168.1.0/24
+proxies: []
+proxy-groups: []
+rules:
+  - MATCH,DIRECT
