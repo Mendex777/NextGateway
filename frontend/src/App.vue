@@ -1454,6 +1454,15 @@ onMounted(async () => {
           <strong>Подключений пока нет</strong>
           <p>Добавьте подписку или прямой VLESS URI.</p>
         </div>
+        <div v-if="subscriptions.length" class="subscription-table-head">
+          <span></span>
+          <span>Подписка</span>
+          <span>Трафик</span>
+          <span>Истекает</span>
+          <span>Подключения</span>
+          <span>Состояние</span>
+          <span>Меню</span>
+        </div>
         <article
           v-for="sub in subscriptions"
           :key="sub.id"
@@ -2550,6 +2559,225 @@ button:disabled {
   border-radius: 9px;
   background: #09141f;
 }
+
+/* 3x-ui inspired compact panel shell. Components remain native NextGateway. */
+:global(body) {
+  color: #e8eaed;
+  background: #1a1b1f;
+}
+:global(.shell) {
+  grid-template-columns: 200px 1fr;
+}
+:global(aside) {
+  padding: 12px 4px;
+  border-right-color: #303238;
+  background: #15161a;
+}
+:global(.logo) {
+  padding: 0 18px 14px;
+  border-bottom: 1px solid #303238;
+}
+:global(.logo span) {
+  color: #fff;
+  background: #1677ff;
+}
+:global(nav) {
+  gap: 3px;
+  padding-top: 7px;
+}
+:global(nav button) {
+  padding: 11px 22px;
+  color: #c1c4cb;
+  border-radius: 8px;
+}
+:global(nav button:hover),
+:global(nav button.active) {
+  color: #fff;
+  background: #173253;
+}
+:global(.user) {
+  border-top-color: #303238;
+}
+:global(.user button),
+:global(.ok) {
+  color: #4096ff !important;
+}
+:global(.content) {
+  max-width: none;
+  padding: 16px 24px 40px;
+}
+:global(.content > header) {
+  align-items: center;
+  min-height: 58px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #303238;
+}
+:global(.content h1) {
+  font-size: 24px;
+}
+:global(.eyebrow) {
+  color: #4096ff;
+}
+:global(.panel),
+:global(.stats article) {
+  border-color: #34363d;
+  border-radius: 10px;
+  background: #23252b;
+}
+:global(.primary) {
+  color: #fff;
+  background: #1677ff;
+}
+:global(.shell .primary) {
+  color: #fff;
+  background: #1677ff;
+}
+:global(.refresh) {
+  color: #d9dce2;
+  border-color: #42454e;
+  border-radius: 6px;
+  background: #292b31;
+}
+.connections-page {
+  gap: 0;
+  padding: 0;
+  overflow: visible;
+  border: 1px solid #34363d;
+  border-radius: 10px;
+  background: #23252b;
+}
+.connections-page > .compact-panel {
+  margin: 0;
+  padding: 14px 16px;
+  border: 0;
+  border-bottom: 1px solid #34363d;
+  border-radius: 10px 10px 0 0;
+  background: transparent;
+}
+.compact-panel .inline-form {
+  border-color: #3b3e46;
+  border-radius: 7px;
+  background: #1d1f24;
+}
+.inline-form input,
+.inline-form select,
+.inline-form textarea {
+  border-color: #444750;
+  border-radius: 6px;
+  background: #181a1f;
+}
+.subscription-table-head,
+.subscription-card {
+  display: grid;
+  grid-template-columns: 36px minmax(155px, 1.5fr) minmax(95px, 0.8fr) minmax(105px, 0.9fr) 100px minmax(105px, 0.8fr) 96px;
+  align-items: center;
+  column-gap: 6px;
+}
+.subscription-table-head {
+  min-width: 760px;
+  margin: 16px 16px 0;
+  padding: 10px 12px;
+  color: #d4d7dd;
+  border-bottom: 1px solid #444750;
+  background: #292b31;
+  font-size: 12px;
+  font-weight: 600;
+}
+.subscription-table-head span {
+  min-width: 0;
+  padding: 0 4px;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.subscription-card {
+  min-width: 760px;
+  margin: 0 16px;
+  border: 0;
+  border-bottom: 1px solid #3b3e46;
+  border-radius: 0;
+  background: transparent;
+}
+.subscription-head {
+  display: contents;
+}
+.subscription-head .expand {
+  grid-column: 1;
+  margin-left: 8px;
+}
+.subscription-title {
+  grid-column: 2;
+  padding: 12px 8px;
+}
+.subscription-title h2 {
+  font-size: 14px;
+}
+.subscription-title small {
+  font-size: 10px;
+}
+.subscription-actions {
+  grid-column: 7;
+  justify-self: end;
+  padding-right: 8px;
+  gap: 5px;
+}
+.subscription-meta {
+  display: contents;
+}
+.subscription-meta > div:nth-child(1) {
+  grid-column: 3;
+}
+.subscription-meta > div:nth-child(2) {
+  grid-column: 4;
+}
+.subscription-meta > div:nth-child(3) {
+  grid-column: 5;
+}
+.subscription-meta > span {
+  grid-column: 6;
+  padding-right: 8px;
+  font-size: 10px;
+}
+.subscription-meta > div {
+  padding: 12px 8px;
+}
+.subscription-meta span,
+.subscription-meta b {
+  font-size: 11px;
+}
+.expand,
+.icon-action,
+.action-menu summary {
+  width: 28px;
+  height: 28px;
+  border-color: #464952;
+  border-radius: 5px;
+  background: #292b31;
+}
+.expand svg,
+.icon-action svg {
+  width: 15px;
+  height: 15px;
+}
+.announcement,
+.subscription-nodes {
+  grid-column: 1 / -1;
+}
+.announcement {
+  margin: 0;
+  padding: 8px 16px;
+  border-top: 1px solid #34363d;
+  background: #1d1f24;
+}
+.subscription-nodes {
+  border-top: 1px solid #34363d;
+  background: #1d1f24;
+}
+.connection-row {
+  padding-right: 12px;
+  padding-left: 50px;
+}
+
 @media (max-width: 900px) {
   .inline-form,
   .settings-form,
@@ -2573,6 +2801,15 @@ button:disabled {
   }
   .subscription-actions {
     flex-wrap: wrap;
+  }
+  :global(.shell) {
+    grid-template-columns: 78px 1fr;
+  }
+  :global(.content) {
+    padding: 12px;
+  }
+  .connections-page {
+    overflow-x: auto;
   }
 }
 @media (max-width: 650px) {
