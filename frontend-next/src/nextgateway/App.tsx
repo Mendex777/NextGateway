@@ -3,6 +3,7 @@ import {
   App as AntApp,
   Button,
   Card,
+  Checkbox,
   ConfigProvider,
   Dropdown,
   Form,
@@ -10,11 +11,13 @@ import {
   Layout,
   message as messageApi,
   Menu,
+  Modal,
   Space,
   Spin,
   Statistic,
   Switch,
   Table,
+  Tabs,
   Tag,
   Typography,
   theme,
@@ -36,11 +39,12 @@ import {
   ToolOutlined,
 } from '@ant-design/icons';
 
-import { api, formatBytes, loadAuth, login, logout, type AuthState, type Node, type Subscription } from './api';
+import { api, formatBytes, loadAuth, login, logout, type AuthState, type Node, type Subscription, type SubscriptionDetail } from './api';
 import ScrambleText from './ScrambleText';
 import './nextgateway.css';
 
 type Page = 'overview' | 'subscriptions' | 'groups' | 'routing' | 'system';
+type ConfigStatus = { pending_changes: boolean; applied_available: boolean; error?: string };
 
 export default function NextGatewayApp() {
   const [page, setPage] = useState<Page>('subscriptions');
@@ -50,6 +54,13 @@ export default function NextGatewayApp() {
   const [error, setError] = useState('');
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [actionId, setActionId] = useState('');
+  const [sourceOpen, setSourceOpen] = useState(false);
+  const [details, setDetails] = useState<Record<string, SubscriptionDetail>>({});
+  const [subscriptionForm] = Form.useForm();
+  const [vlessForm] = Form.useForm();
+  const [deviceMode, setDeviceMode] = useState(false);
+  const [configStatus, setConfigStatus] = useState<ConfigStatus | null>(null);
+  const [configPreview, setConfigPreview] = useState('');
 
   const refresh = async () => {
     setLoading(true);
@@ -58,12 +69,14 @@ export default function NextGatewayApp() {
       const auth = await loadAuth();
       setAuth(auth);
       if (!auth.authenticated) throw new Error('Требуется вход в NextGateway');
-      const [subscriptionRows, nodeRows] = await Promise.all([
+      const [subscriptionRows, nodeRows, runtimeStatus] = await Promise.all([
         api<Subscription[]>('/subscriptions'),
         api<Node[]>('/nodes'),
+        api<ConfigStatus>('/config/mihomo/status'),
       ]);
       setSubscriptions(subscriptionRows);
       setNodes(nodeRows);
+      setConfigStatus(runtimeStatus);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Ошибка загрузки');
     } finally {
@@ -83,6 +96,101 @@ export default function NextGatewayApp() {
       await refresh();
     } catch (reason) {
       messageApi.error(reason instanceof Error ? reason.message : 'Операция не выполнена');
+    } finally {
+      setActionId('');
+    }
+  };
+
+  const loadSubscription = async (row: Subscription) => {
+    if (details[row.id]) return;
+    setActionId(`detail-${row.id}`);
+    try {
+      const detail = await api<SubscriptionDetail>(`/subscriptions/${row.id}`);
+      setDetails((current) => ({ ...current, [row.id]: detail }));
+    } catch (reason) {
+      messageApi.error(reason instanceof Error ? reason.message : 'Не удалось загрузить подключения');
+    } finally {
+      setActionId('');
+    }
+  };
+
+  const importSubscription = async (values: Record<string, string>) => {
+    await runAction('add-subscription', async () => {
+      const device_profile = deviceMode ? {
+        user_agent: values.user_agent,
+        hwid: values.hwid,
+        device_os: values.device_os,
+        os_version: values.os_version,
+        device_model: values.device_model,
+        app_version: values.app_version,
+      } : null;
+      await api('/subscriptions', { method: 'POST', body: JSON.stringify({ url: values.url, device_profile }) });
+      subscriptionForm.resetFields();
+      setSourceOpen(false);
+    }, 'Подписка импортирована');
+  };
+
+  const importVless = async ({ uris }: { uris: string }) => {
+    const links = uris.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+    setActionId('add-vless');
+    const failures: string[] = [];
+    let imported = 0;
+    for (const uri of links) {
+      try {
+        await api('/nodes/import/vless', { method: 'POST', body: JSON.stringify({ uri }) });
+        imported += 1;
+      } catch {
+        failures.push(uri);
+      }
+    }
+    vlessForm.setFieldValue('uris', failures.join('\n'));
+    await refresh();
+    setActionId('');
+    if (imported) messageApi.success(`Добавлено подключений: ${imported}`);
+    if (failures.length) messageApi.warning(`Не удалось добавить: ${failures.length}. Ссылки оставлены в поле.`);
+    if (!failures.length) setSourceOpen(false);
+  };
+
+  const nodeRows = (items: Node[]) => (
+    <Table<Node>
+      className="nodes-table"
+      rowKey="id"
+      size="small"
+      pagination={false}
+      dataSource={items}
+      columns={[
+        { title: 'Подключение', render: (_value, node) => <div className="subscription-name"><strong>{node.name}</strong><small>{node.protocol.toUpperCase()} · {node.server}:{node.port}</small></div> },
+        { title: 'Задержка', width: 110, align: 'center', render: (_value, node) => actionId === `node-${node.id}` ? <Spin size="small" /> : <Tag color={node.last_latency_ms ? 'green' : node.last_probe_error ? 'red' : 'default'}>{node.last_latency_ms ? `${node.last_latency_ms} мс` : node.last_probe_error ? 'Ошибка' : '—'}</Tag> },
+        { title: 'Действия', width: 220, align: 'right', render: (_value, node) => <Space>
+          <Button size="small" loading={actionId === `node-${node.id}`} onClick={() => void runAction(`node-${node.id}`, () => api(`/nodes/${node.id}/probe`, { method: 'POST' }), 'Проверка завершена')}>Проверить</Button>
+          <Button size="small" onClick={() => void api<{uri:string}>(`/nodes/${node.id}/share`).then(({ uri }) => navigator.clipboard.writeText(uri)).then(() => messageApi.success('Ссылка подключения скопирована'))}>Копировать</Button>
+        </Space> },
+      ]}
+    />
+  );
+
+  const showPreview = async () => {
+    setActionId('preview');
+    try {
+      const preview = await api<{ yaml: string }>('/config/mihomo/preview', { method: 'POST' });
+      setConfigPreview(preview.yaml);
+    } catch (reason) {
+      messageApi.error(reason instanceof Error ? reason.message : 'Не удалось собрать конфигурацию');
+    } finally {
+      setActionId('');
+    }
+  };
+
+  const applyMihomo = async () => {
+    setActionId('apply');
+    try {
+      const preview = await api<{ yaml: string }>('/config/mihomo/preview', { method: 'POST' });
+      const operation = await api<{ operation_id: string }>('/system/mihomo/config/apply', { method: 'POST', body: JSON.stringify({ yaml: preview.yaml, rollback_timeout: 120 }) });
+      await api(`/system/mihomo/config/${operation.operation_id}/confirm`, { method: 'POST' });
+      messageApi.success('Конфигурация Mihomo применена и подтверждена');
+      await refresh();
+    } catch (reason) {
+      messageApi.error(reason instanceof Error ? reason.message : 'Не удалось применить Mihomo');
     } finally {
       setActionId('');
     }
@@ -222,8 +330,17 @@ export default function NextGatewayApp() {
                   className="subscriptions-card"
                   title={
                     <Space>
-                      <Button type="primary" icon={<ImportOutlined />}>Добавить источник</Button>
-                      <Button type="primary" icon={<MenuOutlined />}>Общие действия</Button>
+                      <Button type="primary" icon={<ImportOutlined />} onClick={() => setSourceOpen(true)}>Добавить источник</Button>
+                      <Dropdown trigger={['click']} menu={{ items: [
+                        { key: 'preview', label: 'Предпросмотр конфигурации' },
+                        { key: 'apply', label: 'Применить Mihomo', danger: true },
+                        { key: 'reload', label: 'Обновить данные' },
+                      ], onClick: ({ key }) => {
+                        if (key === 'preview') void showPreview();
+                        if (key === 'reload') void refresh();
+                        if (key === 'apply' && window.confirm('Применить текущую конфигурацию Mihomo? Соединения могут кратковременно переподключиться.')) void applyMihomo();
+                      } }}><Button loading={actionId === 'preview' || actionId === 'apply'} type="primary" icon={<MenuOutlined />}>Общие действия</Button></Dropdown>
+                      {configStatus?.pending_changes && <Tag color="orange">Есть неприменённые изменения</Tag>}
                       <Button icon={<LogoutOutlined />} onClick={() => void logout().then(() => setAuth({ setup_required: false, authenticated: false }))}>Выйти</Button>
                     </Space>
                   }
@@ -236,12 +353,41 @@ export default function NextGatewayApp() {
                     dataSource={subscriptions}
                     pagination={false}
                     scroll={{ x: 900 }}
+                    expandable={{
+                      onExpand: (expanded, row) => { if (expanded) void loadSubscription(row); },
+                      expandedRowRender: (row) => actionId === `detail-${row.id}` ? <Spin /> : nodeRows(details[row.id]?.nodes || []),
+                    }}
                   />
                 </Card>
+                {nodes.some((node) => node.source === 'manual') && <Card className="subscriptions-card" title="Локальные подключения">{nodeRows(nodes.filter((node) => node.source === 'manual'))}</Card>}
               </Spin>
             )}
           </Layout.Content>
         </Layout>
+        <Modal open={sourceOpen} onCancel={() => setSourceOpen(false)} footer={null} title="Добавить источник" width={680} destroyOnHidden>
+          <Tabs items={[
+            { key: 'subscription', label: 'HTTPS URL', children: <Form form={subscriptionForm} layout="vertical" initialValues={{ user_agent: 'v2raytun/android', device_os: 'Android', os_version: 'Android 13', app_version: '2.3.5' }} onFinish={importSubscription}>
+              <Form.Item name="url" label="Ссылка на подписку" rules={[{ required: true }, { type: 'url' }]}><Input placeholder="https://…" /></Form.Item>
+              <Checkbox checked={deviceMode} onChange={(event) => setDeviceMode(event.target.checked)}>Требуются данные устройства (Remnawave)</Checkbox>
+              {deviceMode && <div className="device-grid">
+                <Form.Item name="user_agent" label="User-Agent" rules={[{ required: true }]}><Input /></Form.Item>
+                <Form.Item name="hwid" label="HWID" rules={[{ required: true }]}><Input /></Form.Item>
+                <Form.Item name="device_os" label="ОС устройства" rules={[{ required: true }]}><Input /></Form.Item>
+                <Form.Item name="os_version" label="Версия ОС" rules={[{ required: true }]}><Input /></Form.Item>
+                <Form.Item name="device_model" label="Модель устройства" rules={[{ required: true }]}><Input /></Form.Item>
+                <Form.Item name="app_version" label="Версия приложения" rules={[{ required: true }]}><Input /></Form.Item>
+              </div>}
+              <Button type="primary" htmlType="submit" loading={actionId === 'add-subscription'}>Импортировать</Button>
+            </Form> },
+            { key: 'vless', label: 'Прямые VLESS', children: <Form form={vlessForm} layout="vertical" onFinish={importVless}>
+              <Form.Item name="uris" label="Одна или несколько ссылок" rules={[{ required: true }]}><Input.TextArea rows={7} placeholder="VLESS-ссылки — по одной на строку" /></Form.Item>
+              <Button type="primary" htmlType="submit" loading={actionId === 'add-vless'}>Добавить подключения</Button>
+            </Form> },
+          ]} />
+        </Modal>
+        <Modal open={Boolean(configPreview)} onCancel={() => setConfigPreview('')} footer={<Button onClick={() => setConfigPreview('')}>Закрыть</Button>} title="Предпросмотр конфигурации Mihomo" width={900}>
+          <Input.TextArea className="config-preview" value={configPreview} readOnly autoSize={{ minRows: 16, maxRows: 28 }} />
+        </Modal>
       </AntApp>
     </ConfigProvider>
   );

@@ -26,6 +26,8 @@ export type Node = {
   last_probe_error?: string;
 };
 
+export type SubscriptionDetail = Subscription & { nodes: Node[] };
+
 export type AuthState = {
   setup_required: boolean;
   authenticated: boolean;
