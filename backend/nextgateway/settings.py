@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     auth_required: bool = True
     session_hours: int = 12
     frontend_dist: Path = Path("./frontend/dist")
+    frontend_next_dist: Path = Path("/opt/nextgateway/source/frontend-next/dist")
     zashboard_dist: Path = Path("./zashboard")
     bootstrap_token_path: Path = Path("/var/lib/nextgateway/bootstrap-token")
     subscription_secret_root: Path = Path("/var/lib/nextgateway/subscriptions")

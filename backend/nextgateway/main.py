@@ -98,6 +98,13 @@ app.mount(
     name="zashboard",
 )
 
+frontend_next = settings.frontend_next_dist
+app.mount(
+    "/next",
+    StaticFiles(directory=frontend_next, html=True, check_dir=False),
+    name="frontend-next",
+)
+
 frontend = settings.frontend_dist
 if frontend.exists():
     assets = frontend / "assets"

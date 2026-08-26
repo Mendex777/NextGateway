@@ -87,6 +87,7 @@ fi
 test -f "$source_root/pyproject.toml"
 test -f "$source_root/backend/nextgateway/main.py"
 test -f "$source_root/frontend/dist/index.html"
+test -f "$source_root/frontend-next/dist/index.html"
 
 rm -rf -- /opt/nextgateway/source.new
 install -d -o root -g root -m 0755 /opt/nextgateway/source.new
@@ -116,6 +117,7 @@ WorkingDirectory=/var/lib/nextgateway
 Environment=NEXTGATEWAY_DATABASE_URL=sqlite:////var/lib/nextgateway/nextgateway.db
 Environment=NEXTGATEWAY_SYSTEM_MUTATIONS_ENABLED=true
 Environment=NEXTGATEWAY_FRONTEND_DIST=/opt/nextgateway/source/frontend/dist
+Environment=NEXTGATEWAY_FRONTEND_NEXT_DIST=/opt/nextgateway/source/frontend-next/dist
 Environment=NEXTGATEWAY_ZASHBOARD_DIST=/opt/nextgateway/zashboard
 ExecStart=/opt/nextgateway/venv/bin/uvicorn nextgateway.main:app --host 0.0.0.0 --port 8080
 Restart=on-failure

@@ -16,6 +16,10 @@ cd "$repository_root/frontend"
 npm ci
 npm run build
 
+cd "$repository_root/frontend-next"
+npm ci
+npm run build
+
 release_root="$stage_dir/nextgateway"
 mkdir -p "$release_root" "$output_dir"
 tar \
@@ -27,6 +31,9 @@ tar \
   backend/nextgateway \
   backend/migrations \
   frontend/dist \
+  frontend-next/dist \
+  frontend-next/LICENSE.3X-UI \
+  frontend-next/UPSTREAM.md \
   deploy/nextgateway-sudoers | tar -C "$release_root" -xf -
 
 tar -C "$stage_dir" -czf "$output_dir/nextgateway.tar.gz" nextgateway
