@@ -28,5 +28,7 @@
 .nodes-table { margin: -8px 0; }
 .nodes-table .ant-table { background: #111827; }
 .config-preview { font-family: "Cascadia Code", "JetBrains Mono", monospace; font-size: 12px; }
+.management-card { min-height: calc(100vh - 48px); }
+.editor-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 14px; }
 
-@media (max-width: 700px) { .device-grid { grid-template-columns: 1fr; } }
+@media (max-width: 700px) { .device-grid, .editor-grid { grid-template-columns: 1fr; } }

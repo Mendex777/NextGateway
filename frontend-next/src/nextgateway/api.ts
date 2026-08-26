@@ -28,6 +28,28 @@ export type Node = {
 
 export type SubscriptionDetail = Subscription & { nodes: Node[] };
 
+export type ProxyGroup = {
+  id: string;
+  name: string;
+  type: 'select' | 'url-test' | 'fallback';
+  enabled: boolean;
+  node_ids: string[];
+  health_url?: string;
+  interval?: number;
+  tolerance?: number;
+};
+
+export type RoutingRule = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  position: number;
+  type: string;
+  value?: string;
+  target: string;
+  comment?: string;
+};
+
 export type AuthState = {
   setup_required: boolean;
   authenticated: boolean;
