@@ -5,6 +5,7 @@ import {
   Card,
   Checkbox,
   ConfigProvider,
+  Descriptions,
   Dropdown,
   Form,
   Input,
@@ -47,7 +48,7 @@ import {
   ToolOutlined,
 } from '@ant-design/icons';
 
-import { api, formatBytes, loadAuth, login, logout, type AuthState, type Node, type ProxyGroup, type RoutingRule, type Subscription, type SubscriptionDetail } from './api';
+import { api, formatBytes, loadAuth, login, logout, type AuthState, type Installation, type MihomoHealth, type Node, type ProxyGroup, type RoutingRule, type Subscription, type SubscriptionDetail } from './api';
 import ScrambleText from './ScrambleText';
 import './nextgateway.css';
 
@@ -75,6 +76,12 @@ export default function NextGatewayApp() {
   const [ruleEditor, setRuleEditor] = useState<RoutingRule | 'new' | null>(null);
   const [groupForm] = Form.useForm();
   const [ruleForm] = Form.useForm();
+  const [networkForm] = Form.useForm();
+  const [installation, setInstallation] = useState<Installation | null>(null);
+  const [health, setHealth] = useState<MihomoHealth | null>(null);
+  const [networkPreview, setNetworkPreview] = useState('');
+  const [networkOperation, setNetworkOperation] = useState('');
+  const [emojiMode, setEmojiMode] = useState(() => localStorage.getItem('nextgateway-emoji-mode') || 'native');
 
   const refresh = async () => {
     setLoading(true);
@@ -83,18 +90,32 @@ export default function NextGatewayApp() {
       const auth = await loadAuth();
       setAuth(auth);
       if (!auth.authenticated) throw new Error('Требуется вход в NextGateway');
-      const [subscriptionRows, nodeRows, runtimeStatus, groupRows, ruleRows] = await Promise.all([
+      const [subscriptionRows, nodeRows, runtimeStatus, groupRows, ruleRows, installState, mihomoHealth] = await Promise.all([
         api<Subscription[]>('/subscriptions'),
         api<Node[]>('/nodes'),
         api<ConfigStatus>('/config/mihomo/status'),
         api<ProxyGroup[]>('/proxy-groups'),
         api<RoutingRule[]>('/routing-rules'),
+        api<Installation>('/setup/state'),
+        api<MihomoHealth>('/health/mihomo'),
       ]);
       setSubscriptions(subscriptionRows);
       setNodes(nodeRows);
       setConfigStatus(runtimeStatus);
       setGroups(groupRows);
       setRules(ruleRows);
+      setInstallation(installState);
+      setHealth(mihomoHealth);
+      if (!networkForm.isFieldsTouched()) {
+        const iface = installState.environment.default_interface || installState.environment.interfaces[0] || '';
+        networkForm.setFieldsValue({
+          interface: iface,
+          address: installState.environment.addresses[iface]?.[0] || '',
+          gateway: installState.environment.default_gateway || '',
+          dns: installState.environment.default_gateway || '',
+          rollback_timeout: 90,
+        });
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Ошибка загрузки');
     } finally {
@@ -271,6 +292,85 @@ export default function NextGatewayApp() {
     </Card>
   );
 
+  const previewNetwork = async (values: Record<string, string | number>) => {
+    setActionId('network-preview');
+    try {
+      const payload = { ...values, dns: String(values.dns).split(',').map((value) => value.trim()).filter(Boolean) };
+      const preview = await api<{ netplan_yaml: string }>('/system/network/preview', { method: 'POST', body: JSON.stringify(payload) });
+      setNetworkPreview(preview.netplan_yaml);
+    } catch (reason) {
+      messageApi.error(reason instanceof Error ? reason.message : 'Настройки сети не прошли проверку');
+    } finally {
+      setActionId('');
+    }
+  };
+
+  const applyNetwork = async () => {
+    const values = await networkForm.validateFields();
+    if (!window.confirm('Применить новые сетевые настройки? Если панель станет недоступна, изменения автоматически откатятся.')) return;
+    setActionId('network-apply');
+    try {
+      const payload = { ...values, dns: String(values.dns).split(',').map((value) => value.trim()).filter(Boolean) };
+      const operation = await api<{ operation_id: string }>('/system/network/apply', { method: 'POST', body: JSON.stringify(payload) });
+      setNetworkOperation(operation.operation_id);
+      messageApi.warning('Сеть применена с таймером отката. Проверьте доступность панели и подтвердите настройки.');
+    } catch (reason) {
+      messageApi.error(reason instanceof Error ? reason.message : 'Не удалось применить сеть');
+    } finally {
+      setActionId('');
+    }
+  };
+
+  const confirmNetwork = async () => {
+    await runAction('network-confirm', () => api(`/system/network/${networkOperation}/confirm`, { method: 'POST' }), 'Новые сетевые настройки подтверждены');
+    setNetworkOperation('');
+  };
+
+  const openDashboard = async () => {
+    try {
+      const connection = await api<{ hostname: string; port: number; secret: string }>('/system/mihomo/dashboard');
+      const query = new URLSearchParams({ hostname: connection.hostname, port: String(connection.port), secret: connection.secret, disableUpgradeCore: '1' });
+      window.open(`/dashboard/#/setup?${query}`, '_blank', 'noopener,noreferrer');
+    } catch (reason) {
+      messageApi.error(reason instanceof Error ? reason.message : 'Zashboard недоступен');
+    }
+  };
+
+  const systemPage = (
+    <Space direction="vertical" size={16} className="system-stack">
+      <div className="summary-grid">
+        <Card><Statistic title="Mihomo" value={health?.running ? 'Запущен' : 'Остановлен'} valueStyle={{ color: health?.running ? '#52c41a' : '#ff4d4f' }} /></Card>
+        <Card><Statistic title="Runtime API" value={health?.api_available ? 'Доступен' : 'Недоступен'} valueStyle={{ color: health?.api_available ? '#52c41a' : '#ff4d4f' }} /></Card>
+        <Card><Statistic title="Версия" value={health?.version || '—'} /></Card>
+      </div>
+      <Card title="Сеть" extra={networkOperation ? <Button type="primary" loading={actionId === 'network-confirm'} onClick={() => void confirmNetwork()}>Подтвердить новую сеть</Button> : null}>
+        <Form form={networkForm} layout="vertical" onFinish={previewNetwork}>
+          <div className="network-grid">
+            <Form.Item name="interface" label="Интерфейс" rules={[{ required: true }]}><Select options={(installation?.environment.interfaces || []).map((value) => ({ value, label: value }))} /></Form.Item>
+            <Form.Item name="address" label="IP с маской" rules={[{ required: true }]}><Input placeholder="192.168.1.84/24" /></Form.Item>
+            <Form.Item name="gateway" label="Роутер" rules={[{ required: true }]}><Input placeholder="192.168.1.1" /></Form.Item>
+            <Form.Item name="dns" label="DNS через запятую" rules={[{ required: true }]}><Input placeholder="192.168.1.1, 1.1.1.1" /></Form.Item>
+            <Form.Item name="rollback_timeout" label="Автооткат, сек."><InputNumber min={30} max={300} /></Form.Item>
+          </div>
+          <Space><Button htmlType="submit" loading={actionId === 'network-preview'}>Проверить и показать netplan</Button><Button danger type="primary" loading={actionId === 'network-apply'} onClick={() => void applyNetwork()}>Применить сеть</Button></Space>
+        </Form>
+      </Card>
+      <Card title="Система" extra={<Button onClick={() => void openDashboard()}>Открыть Zashboard</Button>}>
+        <Descriptions bordered size="small" column={{ xs: 1, sm: 2 }} items={[
+          { key: 'os', label: 'ОС', children: installation?.environment.os || '—' },
+          { key: 'status', label: 'Установка', children: <Tag color="green">{installation?.status || '—'}</Tag> },
+          { key: 'interface', label: 'Интерфейс по умолчанию', children: installation?.environment.default_interface || '—' },
+          { key: 'gateway', label: 'Upstream gateway', children: installation?.environment.default_gateway || '—' },
+          { key: 'address', label: 'Адреса', children: Object.entries(installation?.environment.addresses || {}).map(([key, value]) => `${key}: ${value.join(', ') || '—'}`).join(' · ') },
+          { key: 'config', label: 'Конфигурация Mihomo', children: configStatus?.pending_changes ? <Tag color="orange">Есть изменения</Tag> : <Tag color="green">Применена</Tag> },
+        ]} />
+      </Card>
+      <Card title="Отображение эмодзи">
+        <Space><Select value={emojiMode} onChange={(value) => { setEmojiMode(value); localStorage.setItem('nextgateway-emoji-mode', value); }} options={[{ value: 'native', label: 'Системные' }, { value: 'off', label: 'Выключены — флаги остаются системными' }]} /><span className="emoji-preview">🇳🇱 🇩🇪 🚀 💎 ⚡ 🛡️</span></Space>
+      </Card>
+    </Space>
+  );
+
   const traffic = useMemo(
     () =>
       subscriptions.reduce(
@@ -391,7 +491,7 @@ export default function NextGatewayApp() {
             <div className="nextgateway-version"><ToolOutlined /> development</div>
           </Layout.Sider>
           <Layout.Content className="nextgateway-content">
-            {page === 'groups' ? groupsPage : page === 'routing' ? routingPage : page !== 'subscriptions' ? (
+            {page === 'groups' ? groupsPage : page === 'routing' ? routingPage : page === 'system' ? systemPage : page !== 'subscriptions' ? (
               <Card><Statistic title={menu.find((item) => item.key === page)?.label} value="В разработке" /></Card>
             ) : (
               <Spin spinning={loading}>
@@ -480,6 +580,9 @@ export default function NextGatewayApp() {
             <Form.Item name="enabled" valuePropName="checked"><Checkbox>Правило включено</Checkbox></Form.Item>
             <Space><Button type="primary" htmlType="submit" loading={actionId === 'save-rule'}>Сохранить</Button><Button onClick={() => setRuleEditor(null)}>Отмена</Button></Space>
           </Form>
+        </Modal>
+        <Modal open={Boolean(networkPreview)} onCancel={() => setNetworkPreview('')} footer={<Button onClick={() => setNetworkPreview('')}>Закрыть</Button>} title="Предпросмотр netplan" width={760}>
+          <Input.TextArea className="config-preview" value={networkPreview} readOnly autoSize={{ minRows: 12, maxRows: 24 }} />
         </Modal>
       </AntApp>
     </ConfigProvider>

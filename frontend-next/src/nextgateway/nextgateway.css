@@ -30,5 +30,9 @@
 .config-preview { font-family: "Cascadia Code", "JetBrains Mono", monospace; font-size: 12px; }
 .management-card { min-height: calc(100vh - 48px); }
 .editor-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 14px; }
+.network-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0 12px; }
+.system-stack { width: 100%; }
+.emoji-preview { font-size: 22px; }
 
-@media (max-width: 700px) { .device-grid, .editor-grid { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .network-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 700px) { .device-grid, .editor-grid, .network-grid { grid-template-columns: 1fr; } }

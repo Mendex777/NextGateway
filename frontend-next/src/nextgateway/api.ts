@@ -50,6 +50,30 @@ export type RoutingRule = {
   comment?: string;
 };
 
+export type Installation = {
+  status: string;
+  current_step: string;
+  desired_config: Record<string, unknown>;
+  last_error?: string;
+  operation_kind?: string;
+  operation_id?: string;
+  environment: {
+    os: string;
+    interfaces: string[];
+    addresses: Record<string, string[]>;
+    default_gateway?: string;
+    default_interface?: string;
+  };
+};
+
+export type MihomoHealth = {
+  installed: boolean;
+  running: boolean;
+  api_available: boolean;
+  version?: string;
+  error?: string;
+};
+
 export type AuthState = {
   setup_required: boolean;
   authenticated: boolean;
