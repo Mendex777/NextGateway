@@ -29,6 +29,7 @@ import {
 } from 'antd';
 import {
   BarsOutlined,
+  CheckCircleOutlined,
   DashboardOutlined,
   ImportOutlined,
   MenuOutlined,
@@ -46,9 +47,10 @@ import {
   SwapOutlined,
   TagsOutlined,
   ToolOutlined,
+  WarningOutlined,
 } from '@ant-design/icons';
 
-import { api, formatBytes, loadAuth, login, logout, type AuthState, type Installation, type MihomoHealth, type Node, type ProxyGroup, type RoutingRule, type Subscription, type SubscriptionDetail } from './api';
+import { api, formatBytes, loadAuth, login, logout, setupAdmin, type AuthState, type Installation, type MihomoHealth, type Node, type ProxyGroup, type RoutingRule, type Subscription, type SubscriptionDetail } from './api';
 import ScrambleText from './ScrambleText';
 import './nextgateway.css';
 
@@ -82,6 +84,10 @@ export default function NextGatewayApp() {
   const [networkPreview, setNetworkPreview] = useState('');
   const [networkOperation, setNetworkOperation] = useState('');
   const [emojiMode, setEmojiMode] = useState(() => localStorage.getItem('nextgateway-emoji-mode') || 'native');
+  const [subscriptionEditor, setSubscriptionEditor] = useState<Subscription | null>(null);
+  const [nodeEditor, setNodeEditor] = useState<Node | null>(null);
+  const [subscriptionEditForm] = Form.useForm();
+  const [nodeEditForm] = Form.useForm();
 
   const refresh = async () => {
     setLoading(true);
@@ -190,6 +196,29 @@ export default function NextGatewayApp() {
     if (!failures.length) setSourceOpen(false);
   };
 
+  const editSubscription = (subscription: Subscription) => {
+    setSubscriptionEditor(subscription);
+    subscriptionEditForm.setFieldsValue({ name: subscription.name, enabled: subscription.enabled, update_interval: subscription.update_interval });
+  };
+
+  const saveSubscription = async (values: { name: string; enabled: boolean; update_interval: number }) => {
+    if (!subscriptionEditor) return;
+    await runAction('save-subscription', () => api(`/subscriptions/${subscriptionEditor.id}`, { method: 'PUT', body: JSON.stringify(values) }), 'Подписка обновлена');
+    setSubscriptionEditor(null);
+  };
+
+  const editNode = (node: Node) => {
+    setNodeEditor(node);
+    nodeEditForm.setFieldsValue({ name: node.name, enabled: node.enabled });
+  };
+
+  const saveNode = async (values: { name: string; enabled: boolean }) => {
+    if (!nodeEditor) return;
+    await runAction('save-node', () => api(`/nodes/${nodeEditor.id}`, { method: 'PUT', body: JSON.stringify(values) }), 'Подключение обновлено');
+    setNodeEditor(null);
+    setDetails({});
+  };
+
   const nodeRows = (items: Node[]) => (
     <Table<Node>
       className="nodes-table"
@@ -200,9 +229,11 @@ export default function NextGatewayApp() {
       columns={[
         { title: 'Подключение', render: (_value, node) => <div className="subscription-name"><strong>{node.name}</strong><small>{node.protocol.toUpperCase()} · {node.server}:{node.port}</small></div> },
         { title: 'Задержка', width: 110, align: 'center', render: (_value, node) => actionId === `node-${node.id}` ? <Spin size="small" /> : <Tag color={node.last_latency_ms ? 'green' : node.last_probe_error ? 'red' : 'default'}>{node.last_latency_ms ? `${node.last_latency_ms} мс` : node.last_probe_error ? 'Ошибка' : '—'}</Tag> },
-        { title: 'Действия', width: 220, align: 'right', render: (_value, node) => <Space>
+        { title: 'Действия', width: 285, align: 'right', render: (_value, node) => <Space>
           <Button size="small" loading={actionId === `node-${node.id}`} onClick={() => void runAction(`node-${node.id}`, () => api(`/nodes/${node.id}/probe`, { method: 'POST' }), 'Проверка завершена')}>Проверить</Button>
           <Button size="small" onClick={() => void api<{uri:string}>(`/nodes/${node.id}/share`).then(({ uri }) => navigator.clipboard.writeText(uri)).then(() => messageApi.success('Ссылка подключения скопирована'))}>Копировать</Button>
+          <Button size="small" aria-label={`Изменить ${node.name}`} icon={<EditOutlined />} onClick={() => editNode(node)} />
+          {node.source === 'manual' && <Popconfirm title="Удалить локальное подключение?" onConfirm={() => void runAction(`delete-node-${node.id}`, () => api(`/nodes/${node.id}`, { method: 'DELETE' }), 'Подключение удалено')}><Button size="small" danger aria-label={`Удалить ${node.name}`} icon={<DeleteOutlined />} /></Popconfirm>}
         </Space> },
       ]}
     />
@@ -385,17 +416,20 @@ export default function NextGatewayApp() {
     { title: 'ID', width: 58, align: 'right', render: (_value, _row, index) => index + 1 },
     {
       title: 'Меню',
-      width: 72,
+      width: 102,
       align: 'center',
       render: (_value, row) => (
         <Space size={0}>
           <Button aria-label={`Обновить ${row.remote_name || row.name}`} loading={actionId === `refresh-${row.id}`} type="text" size="small" icon={<ReloadOutlined />} onClick={() => void runAction(`refresh-${row.id}`, () => api(`/subscriptions/${row.id}/refresh`, { method: 'POST' }), 'Подписка обновлена')} />
+          <Button aria-label={`Изменить подписку ${row.remote_name || row.name}`} type="text" size="small" icon={<EditOutlined />} onClick={() => editSubscription(row)} />
           <Dropdown menu={{ items: [
             { key: 'probe', label: 'Проверить подключения' },
             { key: 'copy', label: 'Скопировать ссылку' },
+            { key: 'delete', label: 'Удалить подписку', danger: true },
           ], onClick: ({ key }) => {
             if (key === 'probe') void runAction(`probe-${row.id}`, () => api(`/subscriptions/${row.id}/probe`, { method: 'POST' }), 'Проверка завершена');
             if (key === 'copy') void api<{url:string}>(`/subscriptions/${row.id}/share`).then(({ url }) => navigator.clipboard.writeText(url)).then(() => messageApi.success('Ссылка подписки скопирована')).catch((reason) => messageApi.error(String(reason)));
+            if (key === 'delete' && window.confirm(`Удалить подписку «${row.remote_name || row.name}» и её подключения?`)) void runAction(`delete-sub-${row.id}`, () => api(`/subscriptions/${row.id}`, { method: 'DELETE' }), 'Подписка удалена');
           } }} trigger={['click']}><Button aria-label={`Меню ${row.remote_name || row.name}`} loading={actionId === `probe-${row.id}`} type="text" size="small" icon={<MoreOutlined />} /></Dropdown>
         </Space>
       ),
@@ -442,6 +476,31 @@ export default function NextGatewayApp() {
     },
   ];
 
+  const overviewPage = (
+    <Space direction="vertical" size={16} className="system-stack">
+      <div className="overview-heading"><div><Typography.Title level={2}>Обзор шлюза</Typography.Title><Typography.Text type="secondary">Состояние NextGateway и быстрый доступ к основным операциям</Typography.Text></div><Button onClick={() => void refresh()} loading={loading} icon={<ReloadOutlined />}>Обновить</Button></div>
+      <div className="summary-grid">
+        <Card><Statistic title="Mihomo" value={health?.running ? 'Работает' : 'Остановлен'} prefix={health?.running ? <CheckCircleOutlined /> : <WarningOutlined />} valueStyle={{ color: health?.running ? '#52c41a' : '#ff4d4f' }} /></Card>
+        <Card><Statistic title="Подключения" value={nodes.length} prefix={<ImportOutlined />} /></Card>
+        <Card><Statistic title="Трафик подписок" value={formatBytes(traffic)} prefix={<PieChartOutlined />} /></Card>
+      </div>
+      <Card title="Быстрые действия">
+        <Space wrap><Button type="primary" onClick={() => setPage('subscriptions')}>Подписки и подключения</Button><Button onClick={() => setPage('groups')}>Прокси-группы</Button><Button onClick={() => setPage('routing')}>Маршрутизация</Button><Button onClick={() => setPage('system')}>Сеть и система</Button><Button onClick={() => void showPreview()}>Предпросмотр Mihomo</Button></Space>
+      </Card>
+      <Card title="Состояние конфигурации">
+        <Descriptions bordered size="small" column={{ xs: 1, sm: 2 }} items={[
+          { key: 'runtime', label: 'Runtime API', children: health?.api_available ? <Tag color="green">Доступен</Tag> : <Tag color="red">Недоступен</Tag> },
+          { key: 'version', label: 'Версия Mihomo', children: health?.version || '—' },
+          { key: 'subscriptions', label: 'Подписки', children: subscriptions.length },
+          { key: 'groups', label: 'Прокси-группы', children: groups.length },
+          { key: 'rules', label: 'Правила', children: rules.length },
+          { key: 'pending', label: 'Применение', children: configStatus?.pending_changes ? <Tag color="orange">Требуется применить Mihomo</Tag> : <Tag color="green">Актуально</Tag> },
+        ]} />
+      </Card>
+      <Card title="Подписки"><Table<Subscription> rowKey="id" size="small" pagination={false} dataSource={subscriptions} columns={[{ title: 'Название', render: (_value, row) => row.remote_name || row.name }, { title: 'Узлы', dataIndex: 'nodes_count', width: 90 }, { title: 'Последнее обновление', dataIndex: 'last_success', width: 210, render: (value) => value || '—' }, { title: 'Состояние', width: 130, render: (_value, row) => row.last_error ? <Tag color="red">Ошибка</Tag> : <Tag color="green">Работает</Tag> }]} /></Card>
+    </Space>
+  );
+
   const menu = [
     { key: 'overview', icon: <DashboardOutlined />, label: 'Обзор' },
     { key: 'subscriptions', icon: <ImportOutlined />, label: 'Подписки' },
@@ -451,22 +510,26 @@ export default function NextGatewayApp() {
   ];
 
   if (auth && !auth.authenticated) {
+    const setupToken = new URLSearchParams(window.location.search).get('token') || '';
     return (
       <ConfigProvider theme={{ algorithm: theme.darkAlgorithm, token: { colorPrimary: '#1677ff' } }}>
         <AntApp>
           <div className="login-page">
             <Card className="login-card">
               <Typography.Title level={2}><ScrambleText>NextGateway</ScrambleText></Typography.Title>
-              <Typography.Paragraph type="secondary">Войдите в панель управления шлюзом</Typography.Paragraph>
-              <Form layout="vertical" onFinish={async ({ username, password }) => {
+              <Typography.Paragraph type="secondary">{auth.setup_required ? 'Создайте первого администратора NextGateway' : 'Войдите в панель управления шлюзом'}</Typography.Paragraph>
+              <Form layout="vertical" onFinish={async ({ username, password, confirm_password }) => {
+                if (auth.setup_required && password !== confirm_password) { messageApi.error('Пароли не совпадают'); return; }
                 setLoading(true);
-                try { setAuth(await login(username, password)); await refresh(); }
-                catch (reason) { messageApi.error(reason instanceof Error ? reason.message : 'Ошибка входа'); }
+                try { setAuth(auth.setup_required ? await setupAdmin(username, password, setupToken) : await login(username, password)); await refresh(); }
+                catch (reason) { messageApi.error(reason instanceof Error ? reason.message : auth.setup_required ? 'Не удалось создать администратора' : 'Ошибка входа'); }
                 finally { setLoading(false); }
               }}>
                 <Form.Item label="Пользователь" name="username" rules={[{ required: true }]}><Input autoFocus /></Form.Item>
-                <Form.Item label="Пароль" name="password" rules={[{ required: true }]}><Input.Password /></Form.Item>
-                <Button block type="primary" htmlType="submit" loading={loading} icon={<LoginOutlined />}>Войти</Button>
+                <Form.Item label="Пароль" name="password" rules={[{ required: true }, { min: 12, message: 'Минимум 12 символов' }]}><Input.Password /></Form.Item>
+                {auth.setup_required && <Form.Item label="Повторите пароль" name="confirm_password" rules={[{ required: true }]}><Input.Password /></Form.Item>}
+                {auth.setup_required && !setupToken && <Tag color="red">Откройте ссылку установки с параметром token</Tag>}
+                <Button block type="primary" htmlType="submit" disabled={auth.setup_required && !setupToken} loading={loading} icon={<LoginOutlined />}>{auth.setup_required ? 'Создать администратора' : 'Войти'}</Button>
               </Form>
             </Card>
           </div>
@@ -491,7 +554,7 @@ export default function NextGatewayApp() {
             <div className="nextgateway-version"><ToolOutlined /> development</div>
           </Layout.Sider>
           <Layout.Content className="nextgateway-content">
-            {page === 'groups' ? groupsPage : page === 'routing' ? routingPage : page === 'system' ? systemPage : page !== 'subscriptions' ? (
+            {page === 'overview' ? overviewPage : page === 'groups' ? groupsPage : page === 'routing' ? routingPage : page === 'system' ? systemPage : page !== 'subscriptions' ? (
               <Card><Statistic title={menu.find((item) => item.key === page)?.label} value="В разработке" /></Card>
             ) : (
               <Spin spinning={loading}>
@@ -534,7 +597,7 @@ export default function NextGatewayApp() {
                     }}
                   />
                 </Card>
-                {nodes.some((node) => node.source === 'manual') && <Card className="subscriptions-card" title="Локальные подключения">{nodeRows(nodes.filter((node) => node.source === 'manual'))}</Card>}
+                {nodes.some((node) => node.source === 'manual') && <Card className="subscriptions-card" title="Локальные подключения" extra={<Popconfirm title="Удалить все локальные подключения?" onConfirm={() => void runAction('delete-manual', () => api('/nodes/manual/all', { method: 'DELETE' }), 'Локальные подключения удалены')}><Button danger icon={<DeleteOutlined />}>Удалить все</Button></Popconfirm>}>{nodeRows(nodes.filter((node) => node.source === 'manual'))}</Card>}
               </Spin>
             )}
           </Layout.Content>
@@ -583,6 +646,21 @@ export default function NextGatewayApp() {
         </Modal>
         <Modal open={Boolean(networkPreview)} onCancel={() => setNetworkPreview('')} footer={<Button onClick={() => setNetworkPreview('')}>Закрыть</Button>} title="Предпросмотр netplan" width={760}>
           <Input.TextArea className="config-preview" value={networkPreview} readOnly autoSize={{ minRows: 12, maxRows: 24 }} />
+        </Modal>
+        <Modal open={Boolean(subscriptionEditor)} onCancel={() => setSubscriptionEditor(null)} footer={null} title="Изменить подписку" destroyOnHidden>
+          <Form form={subscriptionEditForm} layout="vertical" onFinish={saveSubscription}>
+            <Form.Item name="name" label="Название" rules={[{ required: true }]}><Input /></Form.Item>
+            <Form.Item name="update_interval" label="Интервал обновления, сек." rules={[{ required: true }]}><InputNumber min={60} max={604800} /></Form.Item>
+            <Form.Item name="enabled" valuePropName="checked"><Checkbox>Автообновление включено</Checkbox></Form.Item>
+            <Space><Button type="primary" htmlType="submit" loading={actionId === 'save-subscription'}>Сохранить</Button><Button onClick={() => setSubscriptionEditor(null)}>Отмена</Button></Space>
+          </Form>
+        </Modal>
+        <Modal open={Boolean(nodeEditor)} onCancel={() => setNodeEditor(null)} footer={null} title="Изменить подключение" destroyOnHidden>
+          <Form form={nodeEditForm} layout="vertical" onFinish={saveNode}>
+            <Form.Item name="name" label="Название" rules={[{ required: true }]}><Input /></Form.Item>
+            <Form.Item name="enabled" valuePropName="checked"><Checkbox>Подключение включено</Checkbox></Form.Item>
+            <Space><Button type="primary" htmlType="submit" loading={actionId === 'save-node'}>Сохранить</Button><Button onClick={() => setNodeEditor(null)}>Отмена</Button></Space>
+          </Form>
         </Modal>
       </AntApp>
     </ConfigProvider>

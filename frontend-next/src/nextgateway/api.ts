@@ -117,6 +117,15 @@ export async function login(username: string, password: string) {
   return state;
 }
 
+export async function setupAdmin(username: string, password: string, setupToken: string) {
+  const state = await api<AuthState>('/auth/setup', {
+    method: 'POST',
+    body: JSON.stringify({ username, password, setup_token: setupToken }),
+  });
+  csrfToken = state.csrf_token || '';
+  return state;
+}
+
 export async function logout() {
   await api<void>('/auth/logout', { method: 'POST' });
   csrfToken = '';
