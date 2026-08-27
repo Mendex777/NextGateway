@@ -91,6 +91,7 @@ export default function NextGatewayApp() {
   const [subscriptionEditForm] = Form.useForm();
   const [nodeEditForm] = Form.useForm();
   const [setupForm] = Form.useForm();
+  const [setupSubscriptionForm] = Form.useForm();
 
   const refresh = async () => {
     setLoading(true);
@@ -138,8 +139,10 @@ export default function NextGatewayApp() {
           core_version: desired.core_version || '1.19.30',
           install_zashboard: desired.install_zashboard ?? true,
           zashboard_version: desired.zashboard_version || '3.21.0',
-          subscription_name: 'Primary',
         });
+      }
+      if (!setupSubscriptionForm.isFieldsTouched()) {
+        setupSubscriptionForm.setFieldsValue({ subscription_name: 'Primary' });
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Ошибка загрузки');
@@ -477,8 +480,8 @@ export default function NextGatewayApp() {
           <Button disabled={installation?.status !== 'network_ready' && !(installation?.status === 'failed' && installation.current_step === 'gateway')} onClick={() => void runSetupStep('/setup/gateway/apply', 'Gateway применён, требуется подтверждение')}>3. Настроить gateway</Button>
           <Button type={installation?.status === 'gateway_pending_confirmation' ? 'primary' : 'default'} disabled={installation?.status !== 'gateway_pending_confirmation'} onClick={() => void runSetupStep('/setup/gateway/confirm', 'Gateway подтверждён')}>Подтвердить gateway</Button>
         </Space>
-        <div className="setup-subscription"><Form form={setupForm} component={false}><Form.Item name="subscription_name" label="Название подписки"><Input /></Form.Item><Form.Item name="subscription_url" label="HTTPS URL"><Input placeholder="https://…" /></Form.Item></Form><Button disabled={!['gateway_ready','subscription_ready'].includes(installation?.status || '')} onClick={() => {
-          const values = setupForm.getFieldsValue();
+        <div className="setup-subscription"><Form form={setupSubscriptionForm} component={false}><Form.Item name="subscription_name" label="Название подписки"><Input /></Form.Item><Form.Item name="subscription_url" label="HTTPS URL"><Input placeholder="https://…" /></Form.Item></Form><Button disabled={!['gateway_ready','subscription_ready'].includes(installation?.status || '')} onClick={() => {
+          const values = setupSubscriptionForm.getFieldsValue();
           if (!values.subscription_url) { messageApi.error('Укажите ссылку подписки'); return; }
           setActionId('setup-subscription');
           api<Installation>('/setup/subscription/import', { method: 'POST', body: JSON.stringify({ name: values.subscription_name || 'Primary', url: values.subscription_url }) }).then((state) => { setInstallation(state); messageApi.success('Подписка импортирована'); return refresh(); }).catch((reason) => messageApi.error(reason instanceof Error ? reason.message : 'Ошибка импорта')).finally(() => setActionId(''));

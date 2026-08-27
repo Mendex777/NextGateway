@@ -55,7 +55,8 @@ fi
 install -d -o root -g root -m 0755 /opt/nextgateway
 install -d -o nextgateway -g nextgateway -m 0700 /var/lib/nextgateway
 install -d -o root -g root -m 0755 /var/lib/nextgateway-system
-install -d -o root -g root -m 0750 /etc/mihomo /etc/nextgateway
+install -d -o root -g root -m 0750 /etc/mihomo
+install -d -o root -g nextgateway -m 0750 /etc/nextgateway
 
 work_dir=$(mktemp -d /tmp/nextgateway-install.XXXXXX)
 cleanup() { rm -rf -- "$work_dir"; }
@@ -153,7 +154,7 @@ fi
 
 echo
 echo "NextGateway is ready for browser setup:"
-echo "http://${manager_ip}:8080/?token=${setup_token}"
+echo "http://${manager_ip}:8080/next/?token=${setup_token}"
 echo
 echo "The bootstrap has not changed networking, DNS, routing, nftables, or installed Mihomo."
 echo "Continue all remaining installation steps in the browser."

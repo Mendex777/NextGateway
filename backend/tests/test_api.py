@@ -193,6 +193,20 @@ def test_mihomo_status_detects_pending_changes(tmp_path: Path, monkeypatch) -> N
     app.dependency_overrides.clear()
 
 
+def test_mihomo_status_reports_incomplete_initial_config(tmp_path: Path) -> None:
+    with make_client(tmp_path / "empty-status.db") as client:
+        response = client.get("/api/v1/config/mihomo/status")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "pending_changes": True,
+            "applied_available": False,
+            "error": "The last enabled routing rule must be MATCH",
+        }
+
+    app.dependency_overrides.clear()
+
+
 def test_manager_subscription_create_does_not_reopen_setup(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("nextgateway.setup._environment", lambda: {
         "os": "Test OS", "interfaces": ["eth0"],

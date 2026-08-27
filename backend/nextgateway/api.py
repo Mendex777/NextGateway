@@ -650,7 +650,14 @@ def compile_preview(session: SessionDep) -> CompilePreview:
 
 @router.get("/config/mihomo/status", response_model=MihomoConfigStatus)
 def mihomo_config_change_status(session: SessionDep) -> MihomoConfigStatus:
-    desired = compile_preview(session).yaml
+    try:
+        desired = compile_preview(session).yaml
+    except HTTPException as exc:
+        return MihomoConfigStatus(
+            pending_changes=True,
+            applied_available=False,
+            error=str(exc.detail),
+        )
     try:
         desired_document = yaml.safe_load(desired) or {}
         from .system.mihomo_apply import normalized_config_digest
