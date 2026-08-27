@@ -1,5 +1,4 @@
 import pytest
-
 from nextgateway.services import node_probe
 
 

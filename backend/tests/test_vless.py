@@ -1,6 +1,6 @@
-import pytest
 from types import SimpleNamespace
 
+import pytest
 from nextgateway.services.vless import (
     VlessParseError,
     build_vless_uri,
@@ -39,8 +39,7 @@ def test_parse_vless_xhttp_compatibility_fields() -> None:
 
 def test_grpc_preserves_empty_provider_service_name() -> None:
     node = parse_vless_uri(
-        "vless://11111111-1111-4111-8111-111111111111@example.com:443"
-        "?type=grpc&serviceName=#GRPC"
+        "vless://11111111-1111-4111-8111-111111111111@example.com:443?type=grpc&serviceName=#GRPC"
     )
     assert "service_name" not in node.transport
 

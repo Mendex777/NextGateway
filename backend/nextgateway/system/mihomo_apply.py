@@ -1,5 +1,5 @@
-import ipaddress
 import hashlib
+import ipaddress
 import json
 import os
 import subprocess
@@ -120,8 +120,14 @@ def apply_config(operation_id: str, timeout: int = 120) -> None:
     try:
         _run(
             [
-                SYSTEMD_RUN, "--unit", unit, "--on-active", f"{timeout}s",
-                HELPER, "rollback-mihomo", operation_id,
+                SYSTEMD_RUN,
+                "--unit",
+                unit,
+                "--on-active",
+                f"{timeout}s",
+                HELPER,
+                "rollback-mihomo",
+                operation_id,
             ]
         )
         _state(directory, "pending_confirmation", rollback_unit=unit)
