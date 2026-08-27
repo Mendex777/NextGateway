@@ -19,6 +19,7 @@ import {
   Space,
   Spin,
   Statistic,
+  Steps,
   Switch,
   Table,
   Tabs,
@@ -31,6 +32,7 @@ import {
   BarsOutlined,
   CheckCircleOutlined,
   DashboardOutlined,
+  DeploymentUnitOutlined,
   ImportOutlined,
   MenuOutlined,
   PieChartOutlined,
@@ -54,7 +56,7 @@ import { api, formatBytes, loadAuth, login, logout, setupAdmin, type AuthState, 
 import ScrambleText from './ScrambleText';
 import './nextgateway.css';
 
-type Page = 'overview' | 'subscriptions' | 'groups' | 'routing' | 'system';
+type Page = 'overview' | 'setup' | 'subscriptions' | 'groups' | 'routing' | 'system';
 type ConfigStatus = { pending_changes: boolean; applied_available: boolean; error?: string };
 
 export default function NextGatewayApp() {
@@ -88,6 +90,7 @@ export default function NextGatewayApp() {
   const [nodeEditor, setNodeEditor] = useState<Node | null>(null);
   const [subscriptionEditForm] = Form.useForm();
   const [nodeEditForm] = Form.useForm();
+  const [setupForm] = Form.useForm();
 
   const refresh = async () => {
     setLoading(true);
@@ -120,6 +123,22 @@ export default function NextGatewayApp() {
           gateway: installState.environment.default_gateway || '',
           dns: installState.environment.default_gateway || '',
           rollback_timeout: 90,
+        });
+      }
+      if (!setupForm.isFieldsTouched()) {
+        const desired = installState.desired_config as Record<string, any>;
+        const iface = desired.network?.interface || installState.environment.default_interface || installState.environment.interfaces[0] || '';
+        const address = desired.network?.address || installState.environment.addresses[iface]?.[0] || '';
+        setupForm.setFieldsValue({
+          interface: iface,
+          address,
+          gateway: desired.network?.gateway || installState.environment.default_gateway || '',
+          dns: (desired.network?.dns || [installState.environment.default_gateway]).filter(Boolean).join(', '),
+          lan_subnet: desired.gateway?.lan_subnet || address.replace(/\.\d+\//, '.0/'),
+          core_version: desired.core_version || '1.19.30',
+          install_zashboard: desired.install_zashboard ?? true,
+          zashboard_version: desired.zashboard_version || '3.21.0',
+          subscription_name: 'Primary',
         });
       }
     } catch (reason) {
@@ -402,6 +421,77 @@ export default function NextGatewayApp() {
     </Space>
   );
 
+  const setupSteps = ['План', 'Mihomo', 'Сеть', 'Gateway', 'Подписка', 'TUN', 'Zashboard'];
+  const setupStepIndex = Math.max(0, { review: 0, install_core: 1, network: 2, gateway: 3, subscription: 4, tun: 5, zashboard: 6, complete: 6 }[installation?.current_step || 'review'] ?? 0);
+
+  const saveSetupPlan = async (values: Record<string, any>) => {
+    const payload = {
+      network: { interface: values.interface, address: values.address, gateway: values.gateway, dns: String(values.dns).split(',').map((value) => value.trim()).filter(Boolean), rollback_timeout: 90 },
+      gateway: { interface: values.interface, lan_subnet: values.lan_subnet, rollback_timeout: 90 },
+      core: 'mihomo', core_version: values.core_version,
+      install_zashboard: values.install_zashboard, zashboard_version: values.zashboard_version,
+    };
+    await runAction('setup-plan', async () => setInstallation(await api<Installation>('/setup/plan', { method: 'PUT', body: JSON.stringify(payload) })), 'План установки сохранён');
+  };
+
+  const runSetupStep = async (path: string, success: string) => {
+    setActionId(`setup-${path}`);
+    try {
+      const state = await api<Installation>(path, { method: 'POST' });
+      setInstallation(state);
+      messageApi.success(success);
+      await refresh();
+    } catch (reason) {
+      messageApi.error(reason instanceof Error ? reason.message : 'Этап установки не выполнен');
+      try { setInstallation(await api<Installation>('/setup/state')); } catch { /* keep the visible error */ }
+    } finally { setActionId(''); }
+  };
+
+  const setupPage = (
+    <Space direction="vertical" size={16} className="system-stack">
+      <Card title="Установка NextGateway" extra={<Tag color={installation?.status === 'complete' ? 'green' : installation?.status === 'failed' ? 'red' : 'blue'}>{installation?.status || 'загрузка'}</Tag>}>
+        <Typography.Paragraph type="secondary">Раздел остаётся доступным после установки. Этапы не блокируют остальные страницы панели.</Typography.Paragraph>
+        <Steps current={setupStepIndex} size="small" items={setupSteps.map((title) => ({ title }))} />
+        {installation?.last_error && <Card size="small" className="setup-error"><Typography.Text type="danger">{installation.last_error}</Typography.Text></Card>}
+      </Card>
+      <Card title="План установки">
+        <Form form={setupForm} layout="vertical" onFinish={saveSetupPlan}>
+          <div className="network-grid">
+            <Form.Item name="interface" label="Интерфейс" rules={[{ required: true }]}><Select options={(installation?.environment.interfaces || []).map((value) => ({ value, label: value }))} /></Form.Item>
+            <Form.Item name="address" label="IP с маской" rules={[{ required: true }]}><Input /></Form.Item>
+            <Form.Item name="gateway" label="Роутер" rules={[{ required: true }]}><Input /></Form.Item>
+            <Form.Item name="dns" label="DNS" rules={[{ required: true }]}><Input /></Form.Item>
+            <Form.Item name="lan_subnet" label="LAN-подсеть" rules={[{ required: true }]}><Input /></Form.Item>
+            <Form.Item name="core_version" label="Версия Mihomo" rules={[{ required: true }]}><Input /></Form.Item>
+            <Form.Item name="zashboard_version" label="Версия Zashboard"><Input /></Form.Item>
+          </div>
+          <Form.Item name="install_zashboard" valuePropName="checked"><Checkbox>Установить Zashboard</Checkbox></Form.Item>
+          <Space><Button type="primary" htmlType="submit" disabled={installation?.status === 'complete'} loading={actionId === 'setup-plan'}>Сохранить план</Button>{installation?.status === 'complete' && <Button onClick={() => void runSetupStep('/setup/reopen', 'Настройки установки снова доступны')}>Вернуться к настройке</Button>}</Space>
+        </Form>
+      </Card>
+      <Card title="Выполнение этапов">
+        <Space wrap>
+          <Button disabled={installation?.status !== 'plan_ready' && !(installation?.status === 'failed' && installation.current_step === 'install_core')} loading={actionId.includes('core/install')} onClick={() => void runSetupStep('/setup/core/install', 'Mihomo установлен')}>1. Установить Mihomo</Button>
+          <Button disabled={installation?.status !== 'core_ready' && !(installation?.status === 'failed' && installation.current_step === 'network')} loading={actionId.includes('network/apply')} onClick={() => void runSetupStep('/setup/network/apply', 'Сеть применена, требуется подтверждение')}>2. Применить сеть</Button>
+          <Button type={installation?.status === 'network_pending_confirmation' ? 'primary' : 'default'} disabled={installation?.status !== 'network_pending_confirmation'} onClick={() => void runSetupStep('/setup/network/confirm', 'Сеть подтверждена')}>Подтвердить сеть</Button>
+          <Button disabled={installation?.status !== 'network_ready' && !(installation?.status === 'failed' && installation.current_step === 'gateway')} onClick={() => void runSetupStep('/setup/gateway/apply', 'Gateway применён, требуется подтверждение')}>3. Настроить gateway</Button>
+          <Button type={installation?.status === 'gateway_pending_confirmation' ? 'primary' : 'default'} disabled={installation?.status !== 'gateway_pending_confirmation'} onClick={() => void runSetupStep('/setup/gateway/confirm', 'Gateway подтверждён')}>Подтвердить gateway</Button>
+        </Space>
+        <div className="setup-subscription"><Form form={setupForm} component={false}><Form.Item name="subscription_name" label="Название подписки"><Input /></Form.Item><Form.Item name="subscription_url" label="HTTPS URL"><Input placeholder="https://…" /></Form.Item></Form><Button disabled={!['gateway_ready','subscription_ready'].includes(installation?.status || '')} onClick={() => {
+          const values = setupForm.getFieldsValue();
+          if (!values.subscription_url) { messageApi.error('Укажите ссылку подписки'); return; }
+          setActionId('setup-subscription');
+          api<Installation>('/setup/subscription/import', { method: 'POST', body: JSON.stringify({ name: values.subscription_name || 'Primary', url: values.subscription_url }) }).then((state) => { setInstallation(state); messageApi.success('Подписка импортирована'); return refresh(); }).catch((reason) => messageApi.error(reason instanceof Error ? reason.message : 'Ошибка импорта')).finally(() => setActionId(''));
+        }} loading={actionId === 'setup-subscription'}>4. Импортировать подписку</Button></div>
+        <Space wrap>
+          <Button disabled={installation?.status !== 'subscription_ready' && !(installation?.status === 'failed' && installation.current_step === 'tun')} onClick={() => void runSetupStep('/setup/tun/apply', 'TUN применён, требуется подтверждение')}>5. Применить TUN</Button>
+          <Button type={installation?.status === 'tun_pending_confirmation' ? 'primary' : 'default'} disabled={installation?.status !== 'tun_pending_confirmation'} onClick={() => void runSetupStep('/setup/tun/confirm', 'TUN подтверждён')}>Подтвердить TUN</Button>
+          <Button disabled={installation?.status !== 'tun_ready' && !(installation?.status === 'failed' && installation.current_step === 'zashboard')} onClick={() => void runSetupStep('/setup/zashboard/install', 'Zashboard установлен, настройка завершена')}>6. Установить Zashboard</Button>
+        </Space>
+      </Card>
+    </Space>
+  );
+
   const traffic = useMemo(
     () =>
       subscriptions.reduce(
@@ -503,6 +593,7 @@ export default function NextGatewayApp() {
 
   const menu = [
     { key: 'overview', icon: <DashboardOutlined />, label: 'Обзор' },
+    { key: 'setup', icon: <DeploymentUnitOutlined />, label: 'Установка' },
     { key: 'subscriptions', icon: <ImportOutlined />, label: 'Подписки' },
     { key: 'groups', icon: <TagsOutlined />, label: 'Группы' },
     { key: 'routing', icon: <SwapOutlined />, label: 'Маршрутизация' },
@@ -554,7 +645,7 @@ export default function NextGatewayApp() {
             <div className="nextgateway-version"><ToolOutlined /> development</div>
           </Layout.Sider>
           <Layout.Content className="nextgateway-content">
-            {page === 'overview' ? overviewPage : page === 'groups' ? groupsPage : page === 'routing' ? routingPage : page === 'system' ? systemPage : page !== 'subscriptions' ? (
+            {page === 'overview' ? overviewPage : page === 'setup' ? setupPage : page === 'groups' ? groupsPage : page === 'routing' ? routingPage : page === 'system' ? systemPage : page !== 'subscriptions' ? (
               <Card><Statistic title={menu.find((item) => item.key === page)?.label} value="В разработке" /></Card>
             ) : (
               <Spin spinning={loading}>

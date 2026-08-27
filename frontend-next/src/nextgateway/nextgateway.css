@@ -35,6 +35,10 @@
 .emoji-preview { font-size: 22px; }
 .overview-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .overview-heading .ant-typography { margin: 0; }
+.setup-error { margin-top: 16px; border-color: #7f1d1d; }
+.setup-subscription { display: grid; grid-template-columns: 180px minmax(260px, 1fr) auto; gap: 12px; align-items: end; margin: 20px 0; }
+.setup-subscription .ant-form-item { margin-bottom: 0; }
 
 @media (max-width: 900px) { .network-grid { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 700px) { .device-grid, .editor-grid, .network-grid { grid-template-columns: 1fr; } }
+@media (max-width: 700px) { .setup-subscription { grid-template-columns: 1fr; } }
