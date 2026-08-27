@@ -203,7 +203,7 @@ const SWAGGER_ONLY_DEPS = [
 ];
 
 export default defineConfig({
-  base: '/next/',
+  base: '/',
   plugins: [react(), injectBasePathPlugin(), rocketLoaderOptOutPlugin()],
   resolve: {
     alias: {

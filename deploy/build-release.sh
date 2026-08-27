@@ -17,10 +17,6 @@ if [[ -z "$node_bin" && -x "$(dirname "$(command -v npm)")/node.exe" ]]; then
 fi
 [[ -n "$node_bin" ]]
 
-cd "$repository_root/frontend"
-npm ci
-npm run build
-
 cd "$repository_root/frontend-next"
 npm ci
 "$node_bin" --experimental-strip-types scripts/build-openapi.mjs
@@ -37,7 +33,6 @@ tar \
   backend/nextgateway \
   backend/migrations \
   routing-templates \
-  frontend/dist \
   frontend-next/dist \
   frontend-next/LICENSE.3X-UI \
   frontend-next/UPSTREAM.md \

@@ -11,7 +11,7 @@ UMask=0077
 WorkingDirectory=/var/lib/nextgateway
 Environment=NEXTGATEWAY_DATABASE_URL=sqlite:////var/lib/nextgateway/nextgateway.db
 Environment=NEXTGATEWAY_SYSTEM_MUTATIONS_ENABLED=true
-Environment=NEXTGATEWAY_FRONTEND_DIST=/opt/nextgateway/source/frontend/dist
+Environment=NEXTGATEWAY_FRONTEND_DIST=/opt/nextgateway/source/frontend-next/dist
 Environment=NEXTGATEWAY_ZASHBOARD_DIST=/opt/nextgateway/zashboard
 ExecStart=/opt/nextgateway/venv/bin/uvicorn nextgateway.main:app --host 192.168.1.84 --port 8080
 Restart=on-failure

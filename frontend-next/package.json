@@ -24,8 +24,7 @@
     "build-storybook": "storybook build",
     "gen": "npm run gen:zod && npm run gen:api",
     "gen:api": "node scripts/build-openapi.mjs",
-    "gen:zod": "cd .. && go run ./tools/openapigen",
-    "prepare": "cd .. && husky frontend/.husky || true"
+    "gen:zod": "cd .. && go run ./tools/openapigen"
   },
   "lint-staged": {
     "src/**/*.{ts,tsx}": [
@@ -69,7 +68,6 @@
     "@vitejs/plugin-react": "^6.1.0",
     "@vitest/browser-playwright": "4.1.11",
     "@vitest/coverage-v8": "^4.1.11",
-    "husky": "^9.1.7",
     "jsdom": "^30.0.1",
     "lint-staged": "^17.3.0",
     "msw": "^2.15.0",

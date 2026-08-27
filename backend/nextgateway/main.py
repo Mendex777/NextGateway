@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -98,13 +98,6 @@ app.mount(
     name="zashboard",
 )
 
-frontend_next = settings.frontend_next_dist
-app.mount(
-    "/next",
-    StaticFiles(directory=frontend_next, html=True, check_dir=False),
-    name="frontend-next",
-)
-
 frontend = settings.frontend_dist
 if frontend.exists():
     assets = frontend / "assets"
@@ -113,6 +106,8 @@ if frontend.exists():
 
     @app.get("/{path:path}", include_in_schema=False)
     def spa(path: str):
+        if path in {"next", "next/"}:
+            return RedirectResponse(url="/", status_code=308)
         candidate = (frontend / path).resolve()
         if path and candidate.is_file() and frontend.resolve() in candidate.parents:
             return FileResponse(candidate)

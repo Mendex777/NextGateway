@@ -37,7 +37,7 @@ installs only the authenticated manager, and prints a one-time browser URL. A sp
 release can be installed with `sudo bash install.sh --version v0.1.0`.
 
 For local development, the same bootstrap can use a source checkout containing a built
-`frontend/dist` directory:
+`frontend-next/dist` directory:
 
 ```bash
 sudo bash deploy/install.sh --source /path/to/NextGateway
