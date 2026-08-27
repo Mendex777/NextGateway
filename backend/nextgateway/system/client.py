@@ -1,5 +1,6 @@
 import json
 import secrets
+import signal
 import subprocess
 
 from ..settings import settings
@@ -11,7 +12,32 @@ class HelperError(RuntimeError):
     pass
 
 
+SYSTEM_UPDATE_UNITS = ("apt-daily-upgrade.service", "apt-daily.service")
+
+
+def _ensure_system_updates_idle() -> None:
+    for unit in SYSTEM_UPDATE_UNITS:
+        result = subprocess.run(
+            ["/usr/bin/systemctl", "is-active", "--quiet", unit],
+            check=False,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            raise HelperError(
+                "Ubuntu is installing system updates. Wait for the update to finish "
+                "and repeat this action. No changes were applied."
+            )
+
+
 def _call(arguments: list[str], input_text: str | None = None, timeout: int = 45) -> str:
+    if arguments[0] in {
+        "prepare-network",
+        "prepare-gateway",
+        "prepare-mihomo-config",
+        "install-mihomo",
+        "install-zashboard",
+    }:
+        _ensure_system_updates_idle()
     command = [
         "/usr/bin/sudo",
         "-n",
@@ -33,6 +59,11 @@ def _call(arguments: list[str], input_text: str | None = None, timeout: int = 45
             timeout=timeout,
         )
     except (subprocess.SubprocessError, OSError) as exc:
+        if isinstance(exc, subprocess.CalledProcessError) and exc.returncode == -signal.SIGTERM:
+            raise HelperError(
+                "The NextGateway service was restarted while the operation was starting. "
+                "Repeat this action; no network changes were applied."
+            ) from None
         message = getattr(exc, "stderr", None) or str(exc)
         raise HelperError(f"Privileged helper failed: {message.strip()}") from None
     return result.stdout
