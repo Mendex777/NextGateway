@@ -31,6 +31,7 @@ import {
 import {
   BarsOutlined,
   CheckCircleOutlined,
+  CopyOutlined,
   DashboardOutlined,
   DeploymentUnitOutlined,
   ImportOutlined,
@@ -48,12 +49,14 @@ import {
   SettingOutlined,
   SwapOutlined,
   TagsOutlined,
+  ThunderboltOutlined,
   ToolOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
 
-import { api, formatBytes, loadAuth, login, logout, setupAdmin, type AuthState, type Installation, type MihomoHealth, type Node, type ProxyGroup, type RoutingRule, type Subscription, type SubscriptionDetail } from './api';
+import { api, formatBytes, loadAuth, login, logout, setupAdmin, type AuthState, type Installation, type MihomoHealth, type Node, type ProxyGroup, type RoutingRule, type RuleProvider, type Subscription, type SubscriptionDetail } from './api';
 import ScrambleText from './ScrambleText';
+import { copyText, mapConcurrent } from './ui';
 import './nextgateway.css';
 
 type Page = 'overview' | 'setup' | 'subscriptions' | 'groups' | 'routing' | 'system';
@@ -67,6 +70,7 @@ export default function NextGatewayApp() {
   const [error, setError] = useState('');
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [actionId, setActionId] = useState('');
+  const [probingNodeIds, setProbingNodeIds] = useState<Set<string>>(() => new Set());
   const [sourceOpen, setSourceOpen] = useState(false);
   const [details, setDetails] = useState<Record<string, SubscriptionDetail>>({});
   const [subscriptionForm] = Form.useForm();
@@ -76,10 +80,15 @@ export default function NextGatewayApp() {
   const [configPreview, setConfigPreview] = useState('');
   const [groups, setGroups] = useState<ProxyGroup[]>([]);
   const [rules, setRules] = useState<RoutingRule[]>([]);
+  const [providers, setProviders] = useState<RuleProvider[]>([]);
   const [groupEditor, setGroupEditor] = useState<ProxyGroup | 'new' | null>(null);
   const [ruleEditor, setRuleEditor] = useState<RoutingRule | 'new' | null>(null);
+  const [providerEditor, setProviderEditor] = useState<RuleProvider | 'new' | null>(null);
+  const [templateOpen, setTemplateOpen] = useState(false);
   const [groupForm] = Form.useForm();
   const [ruleForm] = Form.useForm();
+  const [providerForm] = Form.useForm();
+  const [templateForm] = Form.useForm();
   const [networkForm] = Form.useForm();
   const [installation, setInstallation] = useState<Installation | null>(null);
   const [health, setHealth] = useState<MihomoHealth | null>(null);
@@ -87,6 +96,7 @@ export default function NextGatewayApp() {
   const [networkOperation, setNetworkOperation] = useState('');
   const [emojiMode, setEmojiMode] = useState(() => localStorage.getItem('nextgateway-emoji-mode') || 'native');
   const [subscriptionEditor, setSubscriptionEditor] = useState<Subscription | null>(null);
+  const [announcementViewer, setAnnouncementViewer] = useState<{ title: string; text: string } | null>(null);
   const [nodeEditor, setNodeEditor] = useState<Node | null>(null);
   const [subscriptionEditForm] = Form.useForm();
   const [nodeEditForm] = Form.useForm();
@@ -100,12 +110,13 @@ export default function NextGatewayApp() {
       const auth = await loadAuth();
       setAuth(auth);
       if (!auth.authenticated) throw new Error('Требуется вход в NextGateway');
-      const [subscriptionRows, nodeRows, runtimeStatus, groupRows, ruleRows, installState, mihomoHealth] = await Promise.all([
+      const [subscriptionRows, nodeRows, runtimeStatus, groupRows, ruleRows, providerRows, installState, mihomoHealth] = await Promise.all([
         api<Subscription[]>('/subscriptions'),
         api<Node[]>('/nodes'),
         api<ConfigStatus>('/config/mihomo/status'),
         api<ProxyGroup[]>('/proxy-groups'),
         api<RoutingRule[]>('/routing-rules'),
+        api<RuleProvider[]>('/rule-providers'),
         api<Installation>('/setup/state'),
         api<MihomoHealth>('/health/mihomo'),
       ]);
@@ -114,6 +125,7 @@ export default function NextGatewayApp() {
       setConfigStatus(runtimeStatus);
       setGroups(groupRows);
       setRules(ruleRows);
+      setProviders(providerRows);
       setInstallation(installState);
       setHealth(mihomoHealth);
       if (!networkForm.isFieldsTouched()) {
@@ -178,6 +190,70 @@ export default function NextGatewayApp() {
       messageApi.error(reason instanceof Error ? reason.message : 'Не удалось загрузить подключения');
     } finally {
       setActionId('');
+    }
+  };
+
+  const setNodeProbing = (nodeId: string, probing: boolean) => {
+    setProbingNodeIds((current) => {
+      const next = new Set(current);
+      if (probing) next.add(nodeId);
+      else next.delete(nodeId);
+      return next;
+    });
+  };
+
+  const updateNodeResult = (updated: Node) => {
+    setNodes((current) => current.map((node) => node.id === updated.id ? updated : node));
+    setDetails((current) => Object.fromEntries(Object.entries(current).map(([id, detail]) => [
+      id,
+      { ...detail, nodes: detail.nodes.map((node) => node.id === updated.id ? updated : node) },
+    ])));
+  };
+
+  const probeOneNode = async (node: Node, showMessage = true) => {
+    setNodeProbing(node.id, true);
+    try {
+      const updated = await api<Node>(`/nodes/${node.id}/probe`, { method: 'POST' });
+      updateNodeResult(updated);
+      if (showMessage) messageApi.success('Проверка завершена');
+    } catch (reason) {
+      if (showMessage) messageApi.error(reason instanceof Error ? reason.message : 'Проверка не выполнена');
+      throw reason;
+    } finally {
+      setNodeProbing(node.id, false);
+    }
+  };
+
+  const probeSubscription = async (row: Subscription) => {
+    setActionId(`probe-${row.id}`);
+    let failures = 0;
+    try {
+      const detail = details[row.id] || await api<SubscriptionDetail>(`/subscriptions/${row.id}`);
+      setDetails((current) => ({ ...current, [row.id]: detail }));
+      setProbingNodeIds((current) => new Set([...current, ...detail.nodes.map((node) => node.id)]));
+      await mapConcurrent(detail.nodes, 8, async (node) => {
+        try {
+          await probeOneNode(node, false);
+        } catch {
+          failures += 1;
+        }
+      });
+      if (failures) messageApi.warning(`Проверено: ${detail.nodes.length - failures}, ошибок: ${failures}`);
+      else messageApi.success(`Проверено подключений: ${detail.nodes.length}`);
+    } catch (reason) {
+      messageApi.error(reason instanceof Error ? reason.message : 'Проверка не выполнена');
+    } finally {
+      setActionId('');
+    }
+  };
+
+  const copyShare = async (path: string, key: 'url' | 'uri', success: string) => {
+    try {
+      const payload = await api<Record<'url' | 'uri', string>>(path);
+      await copyText(payload[key]);
+      messageApi.success(success);
+    } catch (reason) {
+      messageApi.error(reason instanceof Error ? reason.message : 'Не удалось скопировать ссылку');
     }
   };
 
@@ -248,12 +324,16 @@ export default function NextGatewayApp() {
       size="small"
       pagination={false}
       dataSource={items}
+      scroll={{ x: 696 }}
       columns={[
-        { title: 'Подключение', render: (_value, node) => <div className="subscription-name"><strong>{node.name}</strong><small>{node.protocol.toUpperCase()} · {node.server}:{node.port}</small></div> },
-        { title: 'Задержка', width: 110, align: 'center', render: (_value, node) => actionId === `node-${node.id}` ? <Spin size="small" /> : <Tag color={node.last_latency_ms ? 'green' : node.last_probe_error ? 'red' : 'default'}>{node.last_latency_ms ? `${node.last_latency_ms} мс` : node.last_probe_error ? 'Ошибка' : '—'}</Tag> },
-        { title: 'Действия', width: 285, align: 'right', render: (_value, node) => <Space>
-          <Button size="small" loading={actionId === `node-${node.id}`} onClick={() => void runAction(`node-${node.id}`, () => api(`/nodes/${node.id}/probe`, { method: 'POST' }), 'Проверка завершена')}>Проверить</Button>
-          <Button size="small" onClick={() => void api<{uri:string}>(`/nodes/${node.id}/share`).then(({ uri }) => navigator.clipboard.writeText(uri)).then(() => messageApi.success('Ссылка подключения скопирована'))}>Копировать</Button>
+        { title: 'Подключение', width: 520, render: (_value, node) => {
+          const details = `${node.protocol.toUpperCase()} · ${node.transport_type.toUpperCase()} · ${node.security.toUpperCase()} · ${node.server}:${node.port}`;
+          return <div className="node-identity"><strong title={node.name}>{node.name}</strong><small title={details}>{details}</small></div>;
+        } },
+        { title: 'Задержка', width: 90, align: 'center', render: (_value, node) => probingNodeIds.has(node.id) ? <Spin size="small" /> : <Tag color={node.last_latency_ms ? 'green' : node.last_probe_error ? 'red' : 'default'}>{node.last_latency_ms ? `${node.last_latency_ms} мс` : node.last_probe_error ? 'Ошибка' : '—'}</Tag> },
+        { title: 'Действия', width: 86, align: 'right', render: (_value, node) => <Space size={4}>
+          <Button title="Проверить задержку" aria-label={`Проверить задержку ${node.name}`} size="small" loading={probingNodeIds.has(node.id)} icon={<ThunderboltOutlined />} onClick={() => void probeOneNode(node)} />
+          <Button title="Скопировать ссылку" aria-label={`Скопировать ссылку ${node.name}`} size="small" icon={<CopyOutlined />} onClick={() => void copyShare(`/nodes/${node.id}/share`, 'uri', 'Ссылка подключения скопирована')} />
           <Button size="small" aria-label={`Изменить ${node.name}`} icon={<EditOutlined />} onClick={() => editNode(node)} />
           {node.source === 'manual' && <Popconfirm title="Удалить локальное подключение?" onConfirm={() => void runAction(`delete-node-${node.id}`, () => api(`/nodes/${node.id}`, { method: 'DELETE' }), 'Подключение удалено')}><Button size="small" danger aria-label={`Удалить ${node.name}`} icon={<DeleteOutlined />} /></Popconfirm>}
         </Space> },
@@ -290,7 +370,7 @@ export default function NextGatewayApp() {
 
   const openGroup = (group: ProxyGroup | 'new') => {
     setGroupEditor(group);
-    groupForm.setFieldsValue(group === 'new' ? { name: '', type: 'url-test', enabled: true, node_ids: [], health_url: 'https://www.gstatic.com/generate_204', interval: 300, tolerance: 100 } : group);
+    groupForm.setFieldsValue(group === 'new' ? { name: '', type: 'url-test', enabled: true, node_ids: [], group_ids: [], include_direct: false, include_reject: false, health_url: 'https://www.gstatic.com/generate_204', interval: 300, tolerance: 100 } : group);
   };
 
   const saveGroup = async (values: Omit<ProxyGroup, 'id'>) => {
@@ -311,6 +391,17 @@ export default function NextGatewayApp() {
     setRuleEditor(null);
   };
 
+  const openProvider = (provider: RuleProvider | 'new') => {
+    setProviderEditor(provider);
+    providerForm.setFieldsValue(provider === 'new' ? { name: '', enabled: true, type: 'http', behavior: 'domain', format: 'mrs', interval: 86400, proxy: 'DIRECT' } : provider);
+  };
+
+  const saveProvider = async (values: Omit<RuleProvider, 'id'>) => {
+    const editing = providerEditor !== 'new' && providerEditor;
+    await runAction('save-provider', () => api(editing ? `/rule-providers/${editing.id}` : '/rule-providers', { method: editing ? 'PUT' : 'POST', body: JSON.stringify(values) }), editing ? 'Набор правил обновлён' : 'Набор правил создан');
+    setProviderEditor(null);
+  };
+
   const moveRule = async (rule: RoutingRule, offset: number) => {
     const ordered = rules.map((item) => item.id);
     const from = ordered.indexOf(rule.id);
@@ -320,12 +411,26 @@ export default function NextGatewayApp() {
     await runAction(`move-${rule.id}`, () => api('/routing-rules/reorder', { method: 'POST', body: JSON.stringify({ rule_ids: ordered }) }), 'Порядок правил изменён');
   };
 
+  const installServicePreset = async () => {
+    const base = groups[0];
+    if (!base) return messageApi.error('Сначала создайте основную прокси-группу');
+    if (!window.confirm(`Создать сервисные группы и правила поверх группы «${base.name}»?`)) return;
+    await runAction('service-preset', () => api('/routing-presets/services', { method: 'POST', body: JSON.stringify({ base_group_id: base.id }) }), 'Сервисная маршрутизация создана');
+  };
+
+  const importRoutingTemplate = async (values: { url: string; base_group_id: string }) => {
+    const preview = await api<{ name: string; version: string; providers: number; groups: string[]; rules: number }>('/routing-templates/preview', { method: 'POST', body: JSON.stringify(values) });
+    if (!window.confirm(`Импортировать «${preview.name}» v${preview.version}: ${preview.providers} наборов, ${preview.groups.length} групп, ${preview.rules} правил?`)) return;
+    await runAction('template-import', () => api('/routing-templates/import', { method: 'POST', body: JSON.stringify(values) }), 'Шаблон маршрутизации импортирован');
+    setTemplateOpen(false);
+  };
+
   const groupsPage = (
     <Card className="management-card" title="Прокси-группы" extra={<Space><Tag color="blue">{groups.length}</Tag><Button type="primary" icon={<PlusOutlined />} onClick={() => openGroup('new')}>Создать группу</Button></Space>}>
       <Table<ProxyGroup> rowKey="id" size="small" pagination={false} dataSource={groups} columns={[
         { title: 'Включено', width: 90, align: 'center', render: (_value, group) => <Switch checked={group.enabled} onChange={(enabled) => void runAction(`group-${group.id}`, () => api(`/proxy-groups/${group.id}`, { method: 'PUT', body: JSON.stringify({ ...group, enabled }) }), enabled ? 'Группа включена' : 'Группа выключена')} /> },
         { title: 'Название', dataIndex: 'name', render: (name, group) => <div className="subscription-name"><strong>{name}</strong><small>{group.type}</small></div> },
-        { title: 'Узлы', width: 100, align: 'center', render: (_value, group) => <Tag color="green">{group.node_ids.length}</Tag> },
+        { title: 'Состав', width: 150, align: 'center', render: (_value, group) => <Tag color="green">{group.node_ids.length} узл. · {group.group_ids.length} гр.</Tag> },
         { title: 'Проверка', render: (_value, group) => group.type === 'select' ? 'Ручной выбор' : <span>{group.interval || 300} сек. · допуск {group.tolerance || 0} мс</span> },
         { title: 'Действия', width: 145, align: 'right', render: (_value, group) => <Space><Button aria-label={`Изменить ${group.name}`} icon={<EditOutlined />} onClick={() => openGroup(group)} /><Popconfirm title="Удалить прокси-группу?" onConfirm={() => void runAction(`delete-${group.id}`, () => api(`/proxy-groups/${group.id}`, { method: 'DELETE' }), 'Группа удалена')}><Button danger aria-label={`Удалить ${group.name}`} icon={<DeleteOutlined />} /></Popconfirm></Space> },
       ]} />
@@ -333,7 +438,15 @@ export default function NextGatewayApp() {
   );
 
   const routingPage = (
-    <Card className="management-card" title="Правила маршрутизации" extra={<Space><Tag color="blue">{rules.length}</Tag><Button type="primary" icon={<PlusOutlined />} onClick={() => openRule('new')}>Добавить правило</Button></Space>}>
+    <Card className="management-card" title="Правила маршрутизации" extra={<Space><Tag color="cyan">Наборы: {providers.length}</Tag><Tag color="blue">Правила: {rules.length}</Tag><Button onClick={() => { setTemplateOpen(true); templateForm.setFieldsValue({ url: 'https://raw.githubusercontent.com/Mendex777/NextGateway/master/routing-templates/standard-services/template.yaml', base_group_id: groups[0]?.id }); }}>Импорт шаблона</Button><Button loading={actionId === 'service-preset'} onClick={() => void installServicePreset()}>Встроенный пресет</Button><Button type="primary" icon={<PlusOutlined />} onClick={() => openRule('new')}>Добавить правило</Button></Space>}>
+      <Space direction="vertical" size="large" style={{ width: '100%' }}>
+      <div><Space style={{ marginBottom: 10 }}><Typography.Text strong>Провайдеры правил</Typography.Text><Button size="small" icon={<PlusOutlined />} onClick={() => openProvider('new')}>Добавить набор</Button></Space>
+      <Table<RuleProvider> rowKey="id" size="small" pagination={false} dataSource={providers} columns={[
+        { title: 'Название', dataIndex: 'name' },
+        { title: 'Формат', width: 170, render: (_value, item) => `${item.behavior} · ${item.format}` },
+        { title: 'Обновление', width: 130, render: (_value, item) => `${Math.round(item.interval / 3600)} ч.` },
+        { title: 'Действия', width: 130, align: 'right', render: (_value, item) => <Space><Button icon={<EditOutlined />} onClick={() => openProvider(item)} /><Popconfirm title="Удалить набор правил?" onConfirm={() => void runAction(`delete-provider-${item.id}`, () => api(`/rule-providers/${item.id}`, { method: 'DELETE' }), 'Набор удалён')}><Button danger icon={<DeleteOutlined />} /></Popconfirm></Space> },
+      ]} /></div>
       <Table<RoutingRule> rowKey="id" size="small" pagination={false} dataSource={rules} columns={[
         { title: '#', dataIndex: 'position', width: 55, align: 'center' },
         { title: 'Включено', width: 90, align: 'center', render: (_value, rule) => <Switch checked={rule.enabled} onChange={(enabled) => void runAction(`rule-${rule.id}`, () => api(`/routing-rules/${rule.id}`, { method: 'PUT', body: JSON.stringify({ ...rule, enabled, value: rule.type === 'MATCH' ? null : rule.value || null }) }), enabled ? 'Правило включено' : 'Правило выключено')} /> },
@@ -341,7 +454,7 @@ export default function NextGatewayApp() {
         { title: 'Цель', dataIndex: 'target', width: 180, render: (target) => <Tag color={target === 'REJECT' ? 'red' : target === 'DIRECT' ? 'default' : 'purple'}>{target}</Tag> },
         { title: 'Порядок', width: 95, align: 'center', render: (_value, rule, index) => <Space size={2}><Button disabled={!index} size="small" icon={<ArrowUpOutlined />} onClick={() => void moveRule(rule, -1)} /><Button disabled={index === rules.length - 1} size="small" icon={<ArrowDownOutlined />} onClick={() => void moveRule(rule, 1)} /></Space> },
         { title: 'Действия', width: 145, align: 'right', render: (_value, rule) => <Space><Button aria-label={`Изменить ${rule.name}`} icon={<EditOutlined />} onClick={() => openRule(rule)} /><Popconfirm title="Удалить правило?" onConfirm={() => void runAction(`delete-${rule.id}`, () => api(`/routing-rules/${rule.id}`, { method: 'DELETE' }), 'Правило удалено')}><Button danger aria-label={`Удалить ${rule.name}`} icon={<DeleteOutlined />} /></Popconfirm></Space> },
-      ]} />
+      ]} /></Space>
     </Card>
   );
 
@@ -520,8 +633,8 @@ export default function NextGatewayApp() {
             { key: 'copy', label: 'Скопировать ссылку' },
             { key: 'delete', label: 'Удалить подписку', danger: true },
           ], onClick: ({ key }) => {
-            if (key === 'probe') void runAction(`probe-${row.id}`, () => api(`/subscriptions/${row.id}/probe`, { method: 'POST' }), 'Проверка завершена');
-            if (key === 'copy') void api<{url:string}>(`/subscriptions/${row.id}/share`).then(({ url }) => navigator.clipboard.writeText(url)).then(() => messageApi.success('Ссылка подписки скопирована')).catch((reason) => messageApi.error(String(reason)));
+            if (key === 'probe') void probeSubscription(row);
+            if (key === 'copy') void copyShare(`/subscriptions/${row.id}/share`, 'url', 'Ссылка подписки скопирована');
             if (key === 'delete' && window.confirm(`Удалить подписку «${row.remote_name || row.name}» и её подключения?`)) void runAction(`delete-sub-${row.id}`, () => api(`/subscriptions/${row.id}`, { method: 'DELETE' }), 'Подписка удалена');
           } }} trigger={['click']}><Button aria-label={`Меню ${row.remote_name || row.name}`} loading={actionId === `probe-${row.id}`} type="text" size="small" icon={<MoreOutlined />} /></Dropdown>
         </Space>
@@ -536,12 +649,23 @@ export default function NextGatewayApp() {
     {
       title: 'Подписка',
       dataIndex: 'remote_name',
+      width: 250,
+      ellipsis: true,
       render: (_value, row) => (
         <div className="subscription-name">
           <strong>{row.remote_name || row.name}</strong>
           <small>Обновление каждые {row.update_interval / 3600} ч.</small>
         </div>
       ),
+    },
+    {
+      title: 'Сообщение',
+      dataIndex: 'announcement',
+      width: 260,
+      ellipsis: true,
+      render: (value, row) => value
+        ? <Button className="announcement-button" type="link" title={value} onClick={() => setAnnouncementViewer({ title: row.remote_name || row.name, text: value })}>{value}</Button>
+        : <Typography.Text type="secondary">—</Typography.Text>,
     },
     {
       title: 'Подключения',
@@ -566,6 +690,28 @@ export default function NextGatewayApp() {
       width: 135,
       align: 'center',
       render: (_value, row) => <Tag color="purple">{row.expires_at || '∞'}</Tag>,
+    },
+    {
+      title: 'Действия',
+      width: 92,
+      align: 'right',
+      render: (_value, row) => <Space size={4}>
+        <Button
+          title="Проверить все подключения"
+          aria-label={`Проверить все подключения ${row.remote_name || row.name}`}
+          size="small"
+          loading={actionId === `probe-${row.id}`}
+          icon={<ThunderboltOutlined />}
+          onClick={() => void probeSubscription(row)}
+        />
+        <Button
+          title="Скопировать ссылку подписки"
+          aria-label={`Скопировать ссылку подписки ${row.remote_name || row.name}`}
+          size="small"
+          icon={<CopyOutlined />}
+          onClick={() => void copyShare(`/subscriptions/${row.id}/share`, 'url', 'Ссылка подписки скопирована')}
+        />
+      </Space>,
     },
   ];
 
@@ -684,10 +830,14 @@ export default function NextGatewayApp() {
                     columns={columns}
                     dataSource={subscriptions}
                     pagination={false}
-                    scroll={{ x: 900 }}
+                    scroll={{ x: 1260 }}
                     expandable={{
                       onExpand: (expanded, row) => { if (expanded) void loadSubscription(row); },
-                      expandedRowRender: (row) => actionId === `detail-${row.id}` ? <Spin /> : nodeRows(details[row.id]?.nodes || []),
+                      expandedRowRender: (row) => {
+                        if (actionId === `detail-${row.id}`) return <Spin />;
+                        const detail = details[row.id];
+                        return nodeRows(detail?.nodes || []);
+                      },
                     }}
                   />
                 </Card>
@@ -720,11 +870,22 @@ export default function NextGatewayApp() {
         <Modal open={Boolean(configPreview)} onCancel={() => setConfigPreview('')} footer={<Button onClick={() => setConfigPreview('')}>Закрыть</Button>} title="Предпросмотр конфигурации Mihomo" width={900}>
           <Input.TextArea className="config-preview" value={configPreview} readOnly autoSize={{ minRows: 16, maxRows: 28 }} />
         </Modal>
+        <Modal
+          open={Boolean(announcementViewer)}
+          onCancel={() => setAnnouncementViewer(null)}
+          footer={<Button onClick={() => setAnnouncementViewer(null)}>Закрыть</Button>}
+          title={`Сообщение от подписки${announcementViewer ? ` «${announcementViewer.title}»` : ''}`}
+          width={680}
+        >
+          <Typography.Paragraph className="announcement-text">{announcementViewer?.text}</Typography.Paragraph>
+        </Modal>
         <Modal open={Boolean(groupEditor)} onCancel={() => setGroupEditor(null)} footer={null} title={groupEditor === 'new' ? 'Создать прокси-группу' : 'Изменить прокси-группу'} width={760} destroyOnHidden>
           <Form form={groupForm} layout="vertical" onFinish={saveGroup}>
             <div className="editor-grid"><Form.Item name="name" label="Название" rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="type" label="Тип" rules={[{ required: true }]}><Select options={['select','url-test','fallback'].map((value) => ({ value, label: value }))} /></Form.Item></div>
             <Form.Item name="enabled" valuePropName="checked"><Checkbox>Группа включена</Checkbox></Form.Item>
             <Form.Item name="node_ids" label="Узлы"><Select mode="multiple" showSearch optionFilterProp="label" maxTagCount="responsive" options={nodes.map((node) => ({ value: node.id, label: node.name }))} /></Form.Item>
+            <Form.Item name="group_ids" label="Вложенные группы"><Select mode="multiple" showSearch optionFilterProp="label" maxTagCount="responsive" options={groups.filter((group) => groupEditor === 'new' || group.id !== groupEditor?.id).map((group) => ({ value: group.id, label: group.name }))} /></Form.Item>
+            <Space><Form.Item name="include_direct" valuePropName="checked"><Checkbox>Добавить DIRECT</Checkbox></Form.Item><Form.Item name="include_reject" valuePropName="checked"><Checkbox>Добавить REJECT</Checkbox></Form.Item></Space>
             <div className="editor-grid"><Form.Item name="health_url" label="URL проверки"><Input /></Form.Item><Form.Item name="interval" label="Интервал, сек."><InputNumber min={10} /></Form.Item><Form.Item name="tolerance" label="Допуск, мс"><InputNumber min={0} /></Form.Item></div>
             <Space><Button type="primary" htmlType="submit" loading={actionId === 'save-group'}>Сохранить</Button><Button onClick={() => setGroupEditor(null)}>Отмена</Button></Space>
           </Form>
@@ -736,6 +897,22 @@ export default function NextGatewayApp() {
             <Form.Item name="target" label="Цель" rules={[{ required: true }]}><Select showSearch options={[...groups.map((group) => ({ value: group.name, label: group.name })), { value: 'DIRECT', label: 'DIRECT' }, { value: 'REJECT', label: 'REJECT' }]} /></Form.Item>
             <Form.Item name="enabled" valuePropName="checked"><Checkbox>Правило включено</Checkbox></Form.Item>
             <Space><Button type="primary" htmlType="submit" loading={actionId === 'save-rule'}>Сохранить</Button><Button onClick={() => setRuleEditor(null)}>Отмена</Button></Space>
+          </Form>
+        </Modal>
+        <Modal open={templateOpen} onCancel={() => setTemplateOpen(false)} footer={null} title="Импорт шаблона маршрутизации" width={720} destroyOnHidden>
+          <Form form={templateForm} layout="vertical" onFinish={importRoutingTemplate}>
+            <Form.Item name="url" label="GitHub/raw URL шаблона" rules={[{ required: true }]}><Input /></Form.Item>
+            <Form.Item name="base_group_id" label="Основная VPN-группа" rules={[{ required: true }]}><Select showSearch options={groups.map(group => ({ value: group.id, label: group.name }))} /></Form.Item>
+            <Space><Button type="primary" htmlType="submit" loading={actionId === 'template-import'}>Проверить и импортировать</Button><Button onClick={() => setTemplateOpen(false)}>Отмена</Button></Space>
+          </Form>
+        </Modal>
+        <Modal open={Boolean(providerEditor)} onCancel={() => setProviderEditor(null)} footer={null} title={providerEditor === 'new' ? 'Добавить набор правил' : 'Изменить набор правил'} width={760} destroyOnHidden>
+          <Form form={providerForm} layout="vertical" onFinish={saveProvider}>
+            <div className="editor-grid"><Form.Item name="name" label="Уникальное имя" rules={[{ required: true }]}><Input placeholder="youtube" /></Form.Item><Form.Item name="type" label="Источник"><Select options={['http','file','inline'].map(value => ({ value, label: value }))} /></Form.Item><Form.Item name="behavior" label="Поведение"><Select options={['domain','ipcidr','classical'].map(value => ({ value, label: value }))} /></Form.Item></div>
+            <Form.Item name="url" label="URL"><Input placeholder="https://…/youtube.mrs" /></Form.Item>
+            <div className="editor-grid"><Form.Item name="format" label="Формат"><Select options={['mrs','yaml','text'].map(value => ({ value, label: value }))} /></Form.Item><Form.Item name="interval" label="Интервал, сек."><InputNumber min={60} /></Form.Item><Form.Item name="proxy" label="Загружать через"><Select showSearch options={[{ value: 'DIRECT', label: 'DIRECT' }, ...groups.map(group => ({ value: group.name, label: group.name }))]} /></Form.Item></div>
+            <Form.Item name="enabled" valuePropName="checked"><Checkbox>Набор включён</Checkbox></Form.Item>
+            <Space><Button type="primary" htmlType="submit" loading={actionId === 'save-provider'}>Сохранить</Button><Button onClick={() => setProviderEditor(null)}>Отмена</Button></Space>
           </Form>
         </Modal>
         <Modal open={Boolean(networkPreview)} onCancel={() => setNetworkPreview('')} footer={<Button onClick={() => setNetworkPreview('')}>Закрыть</Button>} title="Предпросмотр netplan" width={760}>

@@ -1,0 +1,11 @@
+{
+  "schema": "nextgateway-routing-registry/v1",
+  "templates": [
+    {
+      "id": "standard-services",
+      "name": "Стандартная сервисная маршрутизация",
+      "version": "1.0.0",
+      "url": "https://raw.githubusercontent.com/Mendex777/NextGateway/master/routing-templates/standard-services/template.yaml"
+    }
+  ]
+}

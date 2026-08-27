@@ -30,6 +30,8 @@ class NodeSummary(BaseModel):
     name: str
     enabled: bool
     protocol: str
+    transport_type: str
+    security: str
     server: str
     port: int
     source: str
@@ -115,12 +117,32 @@ class ProxyGroupCreate(BaseModel):
     type: Literal["select", "url-test", "fallback"] = "select"
     enabled: bool = True
     node_ids: list[str] = Field(default_factory=list)
+    group_ids: list[str] = Field(default_factory=list)
+    include_direct: bool = False
+    include_reject: bool = False
     health_url: str | None = None
     interval: int | None = Field(default=None, ge=10)
     tolerance: int | None = Field(default=None, ge=0)
 
 
 class ProxyGroupRead(ProxyGroupCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+
+
+class RuleProviderCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    enabled: bool = True
+    type: Literal["http", "file", "inline"] = "http"
+    behavior: Literal["domain", "ipcidr", "classical"] = "domain"
+    format: Literal["mrs", "yaml", "text"] = "mrs"
+    url: str | None = None
+    path: str | None = None
+    interval: int = Field(default=86400, ge=60)
+    proxy: str = "DIRECT"
+
+
+class RuleProviderRead(RuleProviderCreate):
     model_config = ConfigDict(from_attributes=True)
     id: str
 
@@ -154,6 +176,22 @@ class RoutingRuleRead(RoutingRuleCreate):
 
 class RoutingRuleOrder(BaseModel):
     rule_ids: list[str] = Field(min_length=1)
+
+
+class RoutingPresetCreate(BaseModel):
+    base_group_id: str
+
+
+class RoutingTemplateImport(RoutingPresetCreate):
+    url: str = Field(min_length=12, max_length=2048)
+
+
+class RoutingTemplatePreview(BaseModel):
+    name: str
+    version: str
+    providers: int
+    groups: list[str]
+    rules: int
 
 
 class CompilePreview(BaseModel):

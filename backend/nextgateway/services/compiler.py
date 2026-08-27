@@ -3,7 +3,7 @@ from typing import Any
 
 import yaml
 
-from ..models import Node, ProxyGroup, RoutingRule
+from ..models import Node, ProxyGroup, RoutingRule, RuleProvider
 
 
 class CompileError(ValueError):
@@ -15,13 +15,14 @@ class CompileInput:
     nodes: list[Node]
     groups: list[ProxyGroup]
     rules: list[RoutingRule]
+    rule_providers: list[RuleProvider] | None = None
     interface_name: str = "ens18"
     lan_address: str = "192.168.1.84"
     local_networks: tuple[str, ...] = ("192.168.1.0/24",)
     controller_address: str = "127.0.0.1"
 
 
-def _compile_node(node: Node) -> dict[str, Any]:
+def compile_node(node: Node) -> dict[str, Any]:
     if node.protocol == "hysteria2":
         result: dict[str, Any] = {
             "name": node.name,
@@ -124,6 +125,14 @@ def compile_mihomo(data: CompileInput) -> dict[str, Any]:
             for item in group.members
             if item.node_id in node_by_id
         ]
+        members.extend(
+            item.member_group.name for item in getattr(group, "group_members", [])
+            if item.member_group.enabled
+        )
+        if getattr(group, "include_direct", False):
+            members.append("DIRECT")
+        if getattr(group, "include_reject", False):
+            members.append("REJECT")
         if not members:
             raise CompileError(f"Proxy group has no enabled nodes: {group.name}")
         compiled: dict[str, Any] = {"name": group.name, "type": group.type, "proxies": members}
@@ -149,7 +158,23 @@ def compile_mihomo(data: CompileInput) -> dict[str, Any]:
     if not rules or not rules[-1].startswith("MATCH,"):
         raise CompileError("The last enabled routing rule must be MATCH")
 
-    return {
+    providers: dict[str, Any] = {}
+    for provider in data.rule_providers or []:
+        if not provider.enabled:
+            continue
+        item: dict[str, Any] = {
+            "type": provider.type, "behavior": provider.behavior,
+            "format": provider.format, "interval": provider.interval,
+        }
+        if provider.url:
+            item["url"] = provider.url
+        if provider.path:
+            item["path"] = provider.path
+        if provider.proxy:
+            item["proxy"] = provider.proxy
+        providers[provider.name] = item
+
+    result = {
         "mode": "rule",
         "log-level": "info",
         "ipv6": False,
@@ -170,6 +195,7 @@ def compile_mihomo(data: CompileInput) -> dict[str, Any]:
         },
         "dns": {
             "enable": True,
+            "respect-rules": True,
             "listen": f"{data.lan_address}:53",
             "ipv6": False,
             "enhanced-mode": "fake-ip",
@@ -178,10 +204,13 @@ def compile_mihomo(data: CompileInput) -> dict[str, Any]:
             "proxy-server-nameserver": ["1.1.1.1", "8.8.8.8"],
             "nameserver": ["https://1.1.1.1/dns-query"],
         },
-        "proxies": [_compile_node(node) for node in nodes],
+        "proxies": [compile_node(node) for node in nodes],
         "proxy-groups": groups,
         "rules": rules,
     }
+    if providers:
+        result["rule-providers"] = providers
+    return result
 
 
 def dump_mihomo_yaml(data: CompileInput) -> str:

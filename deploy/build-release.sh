@@ -11,6 +11,11 @@ trap cleanup EXIT
 command -v npm >/dev/null
 command -v tar >/dev/null
 command -v sha256sum >/dev/null
+node_bin=$(command -v node || true)
+if [[ -z "$node_bin" && -x "$(dirname "$(command -v npm)")/node.exe" ]]; then
+  node_bin="$(dirname "$(command -v npm)")/node.exe"
+fi
+[[ -n "$node_bin" ]]
 
 cd "$repository_root/frontend"
 npm ci
@@ -18,7 +23,8 @@ npm run build
 
 cd "$repository_root/frontend-next"
 npm ci
-npm run build
+"$node_bin" --experimental-strip-types scripts/build-openapi.mjs
+npx vite build
 
 release_root="$stage_dir/nextgateway"
 mkdir -p "$release_root" "$output_dir"
@@ -30,6 +36,7 @@ tar \
   alembic.ini \
   backend/nextgateway \
   backend/migrations \
+  routing-templates \
   frontend/dist \
   frontend-next/dist \
   frontend-next/LICENSE.3X-UI \

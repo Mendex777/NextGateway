@@ -1,4 +1,6 @@
 import uuid
+import urllib.parse
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
@@ -16,7 +18,9 @@ from .models import (
     InstallationState,
     Node,
     ProxyGroup,
+    ProxyGroupGroupMember,
     ProxyGroupMember,
+    RuleProvider,
     RoutingRule,
     Subscription,
     SubscriptionNode,
@@ -36,9 +40,14 @@ from .schemas import (
     NodeUpdate,
     ProxyGroupCreate,
     ProxyGroupRead,
+    RuleProviderCreate,
+    RuleProviderRead,
     RoutingRuleCreate,
     RoutingRuleOrder,
     RoutingRuleRead,
+    RoutingPresetCreate,
+    RoutingTemplateImport,
+    RoutingTemplatePreview,
     SubscriptionCreate,
     SubscriptionDetail,
     SubscriptionRead,
@@ -46,7 +55,7 @@ from .schemas import (
     SubscriptionUpdate,
     VlessImportRequest,
 )
-from .services.compiler import CompileError, CompileInput, dump_mihomo_yaml
+from .services.compiler import CompileError, CompileInput, compile_node, dump_mihomo_yaml
 from .services.hysteria2 import build_hysteria2_uri
 from .services.mihomo_runtime import get_mihomo_health
 from .services.node_probe import NodeProbeError, probe_node
@@ -345,7 +354,9 @@ def probe_single_node(node_id: str, request: Request, session: SessionDep) -> No
     node.last_probe_at = datetime.now(UTC)
     try:
         node.last_latency_ms = probe_node(
-            node.name, api_url=f"http://{request.url.hostname or '127.0.0.1'}:9090"
+            node.name,
+            api_url=f"http://{request.url.hostname or '127.0.0.1'}:9090",
+            proxy=compile_node(node),
         )
         node.last_probe_error = None
     except (OSError, NodeProbeError) as exc:
@@ -374,7 +385,9 @@ def probe_subscription_nodes(
         node.last_probe_at = datetime.now(UTC)
         try:
             node.last_latency_ms = probe_node(
-                node.name, api_url=f"http://{request.url.hostname or '127.0.0.1'}:9090"
+                node.name,
+                api_url=f"http://{request.url.hostname or '127.0.0.1'}:9090",
+                proxy=compile_node(node),
             )
             node.last_probe_error = None
         except (OSError, NodeProbeError) as exc:
@@ -472,12 +485,15 @@ def _group_read(group: ProxyGroup) -> ProxyGroupRead:
         health_url=group.health_url,
         interval=group.interval,
         tolerance=group.tolerance,
+        group_ids=[member.member_group_id for member in group.group_members],
+        include_direct=group.include_direct,
+        include_reject=group.include_reject,
     )
 
 
 @router.get("/proxy-groups", response_model=list[ProxyGroupRead])
 def list_proxy_groups(session: SessionDep) -> list[ProxyGroupRead]:
-    query = select(ProxyGroup).options(selectinload(ProxyGroup.members)).order_by(ProxyGroup.name)
+    query = select(ProxyGroup).options(selectinload(ProxyGroup.members), selectinload(ProxyGroup.group_members).selectinload(ProxyGroupGroupMember.member_group)).order_by(ProxyGroup.name)
     return [_group_read(group) for group in session.scalars(query)]
 
 
@@ -487,6 +503,9 @@ def create_proxy_group(payload: ProxyGroupCreate, session: SessionDep) -> ProxyG
     missing = set(payload.node_ids) - existing_nodes
     if missing:
         raise HTTPException(status_code=422, detail=f"Unknown node IDs: {sorted(missing)}")
+    existing_groups = set(session.scalars(select(ProxyGroup.id).where(ProxyGroup.id.in_(payload.group_ids))))
+    if missing := set(payload.group_ids) - existing_groups:
+        raise HTTPException(status_code=422, detail=f"Unknown group IDs: {sorted(missing)}")
     group = ProxyGroup(
         name=payload.name,
         type=payload.type,
@@ -494,11 +513,14 @@ def create_proxy_group(payload: ProxyGroupCreate, session: SessionDep) -> ProxyG
         health_url=payload.health_url,
         interval=payload.interval,
         tolerance=payload.tolerance,
+        include_direct=payload.include_direct,
+        include_reject=payload.include_reject,
     )
     group.members = [
         ProxyGroupMember(node_id=node_id, position=position)
         for position, node_id in enumerate(payload.node_ids)
     ]
+    group.group_members = [ProxyGroupGroupMember(member_group_id=value, position=position) for position, value in enumerate(payload.group_ids)]
     session.add(group)
     try:
         session.commit()
@@ -516,20 +538,29 @@ def update_proxy_group(
     group = session.get(ProxyGroup, group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Proxy group not found")
+    if group.id in payload.group_ids:
+        raise HTTPException(status_code=422, detail="A group cannot include itself")
     existing_nodes = set(session.scalars(select(Node.id).where(Node.id.in_(payload.node_ids))))
     if missing := set(payload.node_ids) - existing_nodes:
         raise HTTPException(status_code=422, detail=f"Unknown node IDs: {sorted(missing)}")
+    existing_groups = set(session.scalars(select(ProxyGroup.id).where(ProxyGroup.id.in_(payload.group_ids))))
+    if missing := set(payload.group_ids) - existing_groups:
+        raise HTTPException(status_code=422, detail=f"Unknown group IDs: {sorted(missing)}")
     group.name = payload.name
     group.type = payload.type
     group.enabled = payload.enabled
     group.health_url = payload.health_url
     group.interval = payload.interval
     group.tolerance = payload.tolerance
+    group.include_direct = payload.include_direct
+    group.include_reject = payload.include_reject
     session.execute(delete(ProxyGroupMember).where(ProxyGroupMember.group_id == group.id))
     session.add_all(
         ProxyGroupMember(group_id=group.id, node_id=node_id, position=position)
         for position, node_id in enumerate(payload.node_ids)
     )
+    session.execute(delete(ProxyGroupGroupMember).where(ProxyGroupGroupMember.group_id == group.id))
+    session.add_all(ProxyGroupGroupMember(group_id=group.id, member_group_id=value, position=position) for position, value in enumerate(payload.group_ids))
     try:
         session.commit()
     except IntegrityError:
@@ -620,12 +651,193 @@ def delete_routing_rule(rule_id: str, session: SessionDep) -> None:
     session.commit()
 
 
+@router.get("/rule-providers", response_model=list[RuleProviderRead])
+def list_rule_providers(session: SessionDep) -> list[RuleProvider]:
+    return list(session.scalars(select(RuleProvider).order_by(RuleProvider.name)))
+
+
+@router.post("/rule-providers", response_model=RuleProviderRead, status_code=status.HTTP_201_CREATED)
+def create_rule_provider(payload: RuleProviderCreate, session: SessionDep) -> RuleProvider:
+    provider = RuleProvider(**payload.model_dump())
+    session.add(provider)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Rule provider name already exists") from None
+    session.refresh(provider)
+    return provider
+
+
+@router.put("/rule-providers/{provider_id}", response_model=RuleProviderRead)
+def update_rule_provider(provider_id: str, payload: RuleProviderCreate, session: SessionDep) -> RuleProvider:
+    provider = session.get(RuleProvider, provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="Rule provider not found")
+    for field, value in payload.model_dump().items():
+        setattr(provider, field, value)
+    session.commit()
+    session.refresh(provider)
+    return provider
+
+
+@router.delete("/rule-providers/{provider_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_rule_provider(provider_id: str, session: SessionDep) -> None:
+    provider = session.get(RuleProvider, provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="Rule provider not found")
+    session.delete(provider)
+    session.commit()
+
+
+SERVICE_PRESETS = (
+    ("youtube", "📹 YouTube"), ("telegram", "📲 Telegram"),
+    ("meta", "🌐 Meta / Instagram"), ("whatsapp", "💬 WhatsApp"),
+    ("discord", "🎙️ Discord"), ("category-ai-!cn", "🤖 OpenAI и AI"),
+    ("google", "🍀 Google"), ("github", "👨‍💻 GitHub"),
+    ("steam", "🎮 Steam"), ("tiktok", "🎵 TikTok"),
+    ("netflix", "🎥 Netflix"), ("apple", "🍏 Apple"),
+    ("microsoft", "🪟 Microsoft"), ("onedrive", "🐬 OneDrive"),
+)
+SERVICE_IP_PRESETS = (
+    ("telegram", "📲 Telegram", "geo/geoip"),
+    ("google", "🍀 Google", "geo/geoip"),
+    ("netflix", "🎥 Netflix", "geo/geoip"),
+    ("apple", "🍏 Apple", "geo-lite/geoip"),
+)
+
+
+def _fetch_routing_template(url: str) -> dict:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname not in {"raw.githubusercontent.com", "github.com"}:
+        raise HTTPException(status_code=422, detail="Only HTTPS GitHub template URLs are allowed")
+    try:
+        with urllib.request.urlopen(url, timeout=15) as response:
+            raw = response.read(1_048_577)
+    except OSError as exc:
+        raise HTTPException(status_code=422, detail=f"Template download failed: {exc}") from None
+    if len(raw) > 1_048_576:
+        raise HTTPException(status_code=422, detail="Template is too large")
+    try:
+        data = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid template YAML: {exc}") from None
+    if not isinstance(data, dict) or data.get("schema") != "nextgateway-routing-template/v1":
+        raise HTTPException(status_code=422, detail="Unsupported routing template schema")
+    if not isinstance(data.get("providers"), dict) or not isinstance(data.get("services"), list):
+        raise HTTPException(status_code=422, detail="Template must contain providers and services")
+    return data
+
+
+@router.post("/routing-templates/preview", response_model=RoutingTemplatePreview)
+def preview_routing_template(payload: RoutingTemplateImport, session: SessionDep) -> RoutingTemplatePreview:
+    if session.get(ProxyGroup, payload.base_group_id) is None:
+        raise HTTPException(status_code=404, detail="Base proxy group not found")
+    data = _fetch_routing_template(payload.url)
+    services = data["services"]
+    return RoutingTemplatePreview(name=str(data.get("name", data.get("id", "Template"))), version=str(data.get("version", "0")), providers=len(data["providers"]), groups=[str(item["name"]) for item in services], rules=sum(len(item.get("providers", [])) for item in services) + 1)
+
+
+@router.post("/routing-templates/import", response_model=list[RoutingRuleRead])
+def import_routing_template(payload: RoutingTemplateImport, session: SessionDep) -> list[RoutingRule]:
+    data = _fetch_routing_template(payload.url)
+    global SERVICE_PRESETS, SERVICE_IP_PRESETS
+    old_services, old_ips = SERVICE_PRESETS, SERVICE_IP_PRESETS
+    try:
+        SERVICE_PRESETS = tuple((str(item["id"]), str(item["name"])) for item in data["services"])
+        SERVICE_IP_PRESETS = ()
+        result = install_service_routing_preset(RoutingPresetCreate(base_group_id=payload.base_group_id), session)
+        providers = {item.name: item for item in session.scalars(select(RuleProvider))}
+        for key, spec in data["providers"].items():
+            name = f"service-{key}"
+            provider = providers.get(name)
+            if provider is None:
+                provider = RuleProvider(name=name)
+                session.add(provider)
+            provider.type = "http"; provider.behavior = str(spec["behavior"]); provider.format = "mrs"
+            provider.url = str(spec["url"]); provider.path = f"./rules/{name}.mrs"; provider.interval = int(spec.get("interval", 86400)); provider.proxy = "DIRECT"
+        session.flush()
+        preset_rules = list(session.scalars(select(RoutingRule).where(RoutingRule.source == "service-preset")))
+        for rule in preset_rules:
+            session.delete(rule)
+        session.flush()
+        existing = list(session.scalars(select(RoutingRule).order_by(RoutingRule.position)))
+        for i, rule in enumerate(existing): rule.position = -(i + 1)
+        session.flush()
+        ordered = [rule for rule in existing if rule.type != "MATCH"]
+        for service in data["services"]:
+            for key in service.get("providers", []):
+                ordered.append(RoutingRule(name=str(service["name"]), enabled=True, position=0, type="RULE-SET", value=f"service-{key}", target=str(service["name"]), source="service-preset"))
+        ordered.extend([rule for rule in existing if rule.type == "MATCH"] or [RoutingRule(name="Остальной трафик", enabled=True, position=0, type="MATCH", target=session.get(ProxyGroup, payload.base_group_id).name, source="service-preset")])
+        for i, rule in enumerate(ordered): rule.position = i * 10; session.add(rule)
+        session.commit()
+        return list(session.scalars(select(RoutingRule).order_by(RoutingRule.position)))
+    finally:
+        SERVICE_PRESETS, SERVICE_IP_PRESETS = old_services, old_ips
+
+
+@router.post("/routing-presets/services", response_model=list[RoutingRuleRead])
+def install_service_routing_preset(payload: RoutingPresetCreate, session: SessionDep) -> list[RoutingRule]:
+    base = session.get(ProxyGroup, payload.base_group_id)
+    if base is None:
+        raise HTTPException(status_code=404, detail="Base proxy group not found")
+    groups_by_name = {item.name: item for item in session.scalars(select(ProxyGroup))}
+    providers_by_name = {item.name: item for item in session.scalars(select(RuleProvider))}
+    for slug, label in SERVICE_PRESETS:
+        provider_name = f"service-{slug.replace('!', 'not-')}"
+        if provider_name not in providers_by_name:
+            session.add(RuleProvider(
+                name=provider_name, type="http", behavior="domain", format="mrs",
+                url=f"https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/{slug}.mrs",
+                path=f"./rules/{provider_name}.mrs", interval=86400, proxy="DIRECT",
+            ))
+        if label not in groups_by_name:
+            group = ProxyGroup(name=label, type="select", enabled=True, include_direct=True)
+            group.group_members = [ProxyGroupGroupMember(member_group_id=base.id, position=0)]
+            session.add(group)
+    for slug, _label, directory in SERVICE_IP_PRESETS:
+        provider_name = f"service-{slug}-ip"
+        if provider_name not in providers_by_name:
+            session.add(RuleProvider(
+                name=provider_name, type="http", behavior="ipcidr", format="mrs",
+                url=f"https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/{directory}/{slug}.mrs",
+                path=f"./rules/{provider_name}.mrs", interval=86400, proxy="DIRECT",
+            ))
+    session.flush()
+    existing = list(session.scalars(select(RoutingRule).order_by(RoutingRule.position)))
+    for index, rule in enumerate(existing):
+        rule.position = -(index + 1)
+    session.flush()
+    manual = [rule for rule in existing if rule.source != "service-preset" and rule.type != "MATCH"]
+    matches = [rule for rule in existing if rule.source != "service-preset" and rule.type == "MATCH"]
+    for rule in existing:
+        if rule.source == "service-preset":
+            session.delete(rule)
+    session.flush()
+    ordered = list(manual)
+    for slug, label in SERVICE_PRESETS:
+        provider_name = f"service-{slug.replace('!', 'not-')}"
+        ordered.append(RoutingRule(name=label, enabled=True, position=0, type="RULE-SET", value=provider_name, target=label, source="service-preset"))
+    for slug, label, _directory in SERVICE_IP_PRESETS:
+        ordered.append(RoutingRule(name=f"{label} · IP", enabled=True, position=0, type="RULE-SET", value=f"service-{slug}-ip", target=label, source="service-preset"))
+    ordered.extend(matches or [RoutingRule(name="Остальной трафик", enabled=True, position=0, type="MATCH", value=None, target=base.name, source="service-preset")])
+    for position, rule in enumerate(ordered):
+        rule.position = position * 10
+        session.add(rule)
+    session.commit()
+    return list(session.scalars(select(RoutingRule).order_by(RoutingRule.position)))
+
+
 @router.post("/config/mihomo/preview", response_model=CompilePreview)
 def compile_preview(session: SessionDep) -> CompilePreview:
     nodes = list(session.scalars(select(Node).order_by(Node.name)))
-    groups_query = select(ProxyGroup).options(selectinload(ProxyGroup.members))
+    groups_query = select(ProxyGroup).options(
+        selectinload(ProxyGroup.members),
+        selectinload(ProxyGroup.group_members).selectinload(ProxyGroupGroupMember.member_group),
+    )
     groups = list(session.scalars(groups_query))
     rules = list(session.scalars(select(RoutingRule).order_by(RoutingRule.position)))
+    providers = list(session.scalars(select(RuleProvider).order_by(RuleProvider.name)))
     try:
         installation = session.get(InstallationState, 1)
         desired = installation.desired_config if installation else {}
@@ -637,6 +849,7 @@ def compile_preview(session: SessionDep) -> CompilePreview:
                 nodes=nodes,
                 groups=groups,
                 rules=rules,
+                rule_providers=providers,
                 interface_name=network.get("interface", "ens18"),
                 lan_address=lan_address,
                 local_networks=(gateway.get("lan_subnet", "192.168.1.0/24"),),

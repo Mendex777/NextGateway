@@ -1,0 +1,40 @@
+schema: nextgateway-routing-template/v1
+id: standard-services
+name: Стандартная сервисная маршрутизация
+version: 1.0.0
+description: YouTube, Telegram, Meta, Discord, OpenAI и другие сервисы
+providers:
+  youtube: {behavior: domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/youtube.mrs}
+  telegram: {behavior: domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/telegram.mrs}
+  telegram-ip: {behavior: ipcidr, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/telegram.mrs}
+  meta: {behavior: domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/meta.mrs}
+  whatsapp: {behavior: domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/whatsapp.mrs}
+  discord: {behavior: domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/discord.mrs}
+  ai: {behavior: domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ai-!cn.mrs}
+  google: {behavior: domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/google.mrs}
+  google-ip: {behavior: ipcidr, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/google.mrs}
+  github: {behavior: domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/github.mrs}
+  steam: {behavior: domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/steam.mrs}
+  tiktok: {behavior: domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/tiktok.mrs}
+  netflix: {behavior: domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/netflix.mrs}
+  netflix-ip: {behavior: ipcidr, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/netflix.mrs}
+  apple: {behavior: domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/apple.mrs}
+  apple-ip: {behavior: ipcidr, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo-lite/geoip/apple.mrs}
+  microsoft: {behavior: domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/microsoft.mrs}
+  onedrive: {behavior: domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/onedrive.mrs}
+services:
+  - {id: youtube, name: "📹 YouTube", providers: [youtube]}
+  - {id: telegram, name: "📲 Telegram", providers: [telegram, telegram-ip]}
+  - {id: meta, name: "🌐 Meta / Instagram", providers: [meta]}
+  - {id: whatsapp, name: "💬 WhatsApp", providers: [whatsapp]}
+  - {id: discord, name: "🎙️ Discord", providers: [discord]}
+  - {id: ai, name: "🤖 OpenAI и AI", providers: [ai]}
+  - {id: google, name: "🍀 Google", providers: [google, google-ip]}
+  - {id: github, name: "👨‍💻 GitHub", providers: [github]}
+  - {id: steam, name: "🎮 Steam", providers: [steam]}
+  - {id: tiktok, name: "🎵 TikTok", providers: [tiktok]}
+  - {id: netflix, name: "🎥 Netflix", providers: [netflix, netflix-ip]}
+  - {id: apple, name: "🍏 Apple", providers: [apple, apple-ip]}
+  - {id: microsoft, name: "🪟 Microsoft", providers: [microsoft]}
+  - {id: onedrive, name: "🐬 OneDrive", providers: [onedrive]}
+defaults: {include_direct: true, final: "${default_group}"}

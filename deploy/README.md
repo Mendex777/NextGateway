@@ -8,7 +8,7 @@ through a narrow sudoers allow-list.
 Public installation:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mendex/NextGateway/main/deploy/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Mendex777/NextGateway/master/deploy/install.sh | sudo bash
 ```
 
 The remote release archive is accepted only when its separately downloaded SHA-256

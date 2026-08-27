@@ -19,6 +19,8 @@ export type Node = {
   name: string;
   enabled: boolean;
   protocol: string;
+  transport_type: string;
+  security: string;
   server: string;
   port: number;
   source: string;
@@ -34,9 +36,20 @@ export type ProxyGroup = {
   type: 'select' | 'url-test' | 'fallback';
   enabled: boolean;
   node_ids: string[];
+  group_ids: string[];
+  include_direct: boolean;
+  include_reject: boolean;
   health_url?: string;
   interval?: number;
   tolerance?: number;
+};
+
+export type RuleProvider = {
+  id: string; name: string; enabled: boolean;
+  type: 'http' | 'file' | 'inline';
+  behavior: 'domain' | 'ipcidr' | 'classical';
+  format: 'mrs' | 'yaml' | 'text';
+  url?: string; path?: string; interval: number; proxy: string;
 };
 
 export type RoutingRule = {
