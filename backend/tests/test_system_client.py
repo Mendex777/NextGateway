@@ -10,8 +10,8 @@ def test_mutating_helper_is_blocked_during_system_update(monkeypatch) -> None:
 
     def fake_run(command, **kwargs):
         calls.append(command)
-        if command[:3] == ["/usr/bin/systemctl", "is-active", "--quiet"]:
-            return subprocess.CompletedProcess(command, 0)
+        if command[:3] == ["/usr/bin/systemctl", "show", "--property=ActiveState"]:
+            return subprocess.CompletedProcess(command, 0, stdout="activating\n", stderr="")
         raise AssertionError("The privileged helper must not start during an OS update")
 
     monkeypatch.setattr(client.subprocess, "run", fake_run)
@@ -20,7 +20,13 @@ def test_mutating_helper_is_blocked_during_system_update(monkeypatch) -> None:
         client._call(["prepare-network", "--operation-id", "a" * 32], "{}")
 
     assert calls == [
-        ["/usr/bin/systemctl", "is-active", "--quiet", "apt-daily-upgrade.service"]
+        [
+            "/usr/bin/systemctl",
+            "show",
+            "--property=ActiveState",
+            "--value",
+            "apt-daily-upgrade.service",
+        ]
     ]
 
 
@@ -36,8 +42,8 @@ def test_status_helper_remains_available_during_system_update(monkeypatch) -> No
 
 def test_sigterm_has_retryable_message(monkeypatch) -> None:
     def fake_run(command, **kwargs):
-        if command[:3] == ["/usr/bin/systemctl", "is-active", "--quiet"]:
-            return subprocess.CompletedProcess(command, 3)
+        if command[:3] == ["/usr/bin/systemctl", "show", "--property=ActiveState"]:
+            return subprocess.CompletedProcess(command, 0, stdout="inactive\n", stderr="")
         raise subprocess.CalledProcessError(-signal.SIGTERM, command)
 
     monkeypatch.setattr(client.subprocess, "run", fake_run)

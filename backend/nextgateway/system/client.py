@@ -18,11 +18,13 @@ SYSTEM_UPDATE_UNITS = ("apt-daily-upgrade.service", "apt-daily.service")
 def _ensure_system_updates_idle() -> None:
     for unit in SYSTEM_UPDATE_UNITS:
         result = subprocess.run(
-            ["/usr/bin/systemctl", "is-active", "--quiet", unit],
+            ["/usr/bin/systemctl", "show", "--property=ActiveState", "--value", unit],
             check=False,
+            capture_output=True,
+            text=True,
             timeout=5,
         )
-        if result.returncode == 0:
+        if result.stdout.strip() in {"active", "activating", "reloading"}:
             raise HelperError(
                 "Ubuntu is installing system updates. Wait for the update to finish "
                 "and repeat this action. No changes were applied."
