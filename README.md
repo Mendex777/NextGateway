@@ -29,7 +29,7 @@ npm run dev
 On a clean Ubuntu 24.04 VM, run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mendex/NextGateway/main/deploy/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Mendex777/NextGateway/master/deploy/install.sh | sudo bash
 ```
 
 The installer downloads the latest GitHub release, verifies its SHA-256 checksum,
