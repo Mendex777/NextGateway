@@ -1,7 +1,12 @@
 from types import SimpleNamespace
 
 import pytest
-from nextgateway.services.compiler import CompileError, CompileInput, compile_mihomo
+from nextgateway.services.compiler import (
+    CompileError,
+    CompileInput,
+    compile_mihomo,
+    dump_mihomo_yaml,
+)
 
 
 def node(node_id: str = "n1") -> SimpleNamespace:
@@ -67,6 +72,18 @@ def test_compile_hysteria2() -> None:
     assert result["proxies"][0]["type"] == "hysteria2"
     assert result["proxies"][0]["obfs"] == "salamander"
     assert result["rules"] == ["MATCH,HY2"]
+
+
+def test_reality_short_id_is_always_quoted() -> None:
+    proxy = node()
+    proxy.tls["short_id"] = "1e10"
+    rule = SimpleNamespace(
+        enabled=True, position=999, type="MATCH", value=None, target="DE-01"
+    )
+
+    output = dump_mihomo_yaml(CompileInput(nodes=[proxy], groups=[], rules=[rule]))
+
+    assert 'short-id: "1e10"' in output
 
 
 def test_compiler_requires_final_match() -> None:

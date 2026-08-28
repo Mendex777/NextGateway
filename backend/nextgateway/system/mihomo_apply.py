@@ -11,6 +11,7 @@ from pathlib import Path
 
 import yaml
 
+from ..services.yaml_output import dump_mihomo_document
 from .network import validate_operation_id
 
 MIHOMO = "/usr/local/bin/mihomo"
@@ -38,6 +39,20 @@ def current_config_digest() -> str:
 
 def _run(arguments: list[str], timeout: int = 45, check: bool = True) -> None:
     subprocess.run(arguments, check=check, timeout=timeout)
+
+
+def _validate_config(path: Path) -> None:
+    result = subprocess.run(
+        [MIHOMO, "-t", "-d", "/var/lib/mihomo", "-f", str(path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+    if result.returncode:
+        details = (result.stderr or result.stdout).strip().splitlines()
+        message = details[-1] if details else f"Mihomo exited with status {result.returncode}"
+        raise RuntimeError(f"Mihomo configuration validation failed: {message}")
 
 
 def _write(path: Path, content: bytes, mode: int = 0o600) -> None:
@@ -103,9 +118,9 @@ def prepare_config(candidate_yaml: str, operation_id: str | None = None) -> str:
     directory = _directory(operation_id)
     directory.mkdir(parents=True, mode=0o700)
     _write(directory / "config.backup", CONFIG.read_bytes())
-    rendered = yaml.safe_dump(document, sort_keys=False).encode()
+    rendered = dump_mihomo_document(document).encode()
     _write(directory / "config.candidate", rendered)
-    _run([MIHOMO, "-t", "-d", "/var/lib/mihomo", "-f", str(directory / "config.candidate")])
+    _validate_config(directory / "config.candidate")
     _state(directory, "prepared")
     return operation_id
 

@@ -1,9 +1,8 @@
 from dataclasses import dataclass
 from typing import Any
 
-import yaml
-
 from ..models import Node, ProxyGroup, RoutingRule, RuleProvider
+from .yaml_output import dump_mihomo_document
 
 
 class CompileError(ValueError):
@@ -214,4 +213,4 @@ def compile_mihomo(data: CompileInput) -> dict[str, Any]:
 
 
 def dump_mihomo_yaml(data: CompileInput) -> str:
-    return yaml.safe_dump(compile_mihomo(data), allow_unicode=True, sort_keys=False)
+    return dump_mihomo_document(compile_mihomo(data))

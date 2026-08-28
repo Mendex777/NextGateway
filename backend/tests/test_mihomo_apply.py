@@ -19,7 +19,7 @@ def configure_paths(tmp_path: Path, monkeypatch) -> None:
 
 def test_prepare_injects_local_controller_and_secret(tmp_path: Path, monkeypatch) -> None:
     configure_paths(tmp_path, monkeypatch)
-    monkeypatch.setattr(mihomo_apply, "_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(mihomo_apply, "_validate_config", lambda *_args: None)
     operation_id = mihomo_apply.prepare_config(
         "external-controller: 0.0.0.0:9090\nsecret: exposed\nrules: [MATCH,DIRECT]\n"
     )
@@ -32,6 +32,7 @@ def test_prepare_injects_local_controller_and_secret(tmp_path: Path, monkeypatch
 def test_apply_failure_restores_config(tmp_path: Path, monkeypatch) -> None:
     configure_paths(tmp_path, monkeypatch)
     monkeypatch.setattr(mihomo_apply, "_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(mihomo_apply, "_validate_config", lambda *_args: None)
     operation_id = mihomo_apply.prepare_config("tun:\n  enable: true\nrules: [MATCH,DIRECT]\n")
 
     def fail_api():
@@ -43,3 +44,15 @@ def test_apply_failure_restores_config(tmp_path: Path, monkeypatch) -> None:
     assert "enable: false" in mihomo_apply.CONFIG.read_text()
     state = json.loads((mihomo_apply.STATE_ROOT / operation_id / "state.json").read_text())
     assert state["state"] == "rolled_back"
+
+
+def test_validate_config_reports_mihomo_error(tmp_path: Path, monkeypatch) -> None:
+    candidate = tmp_path / "config.yaml"
+    candidate.write_text("rules: []")
+    result = __import__("subprocess").CompletedProcess(
+        [], 1, "", "proxy 6: invalid REALITY short ID\n"
+    )
+    monkeypatch.setattr(mihomo_apply.subprocess, "run", lambda *_args, **_kwargs: result)
+
+    with pytest.raises(RuntimeError, match="proxy 6: invalid REALITY short ID"):
+        mihomo_apply._validate_config(candidate)
