@@ -156,12 +156,15 @@ def test_network_preview_does_not_apply(tmp_path: Path) -> None:
 
 
 def test_mihomo_status_detects_pending_changes(tmp_path: Path, monkeypatch) -> None:
+    import importlib
+
     import yaml
     from nextgateway.system.mihomo_apply import normalized_config_digest
 
     applied = tmp_path / "mihomo.yaml"
     monkeypatch.setattr(
-        "nextgateway.api.current_mihomo_config_digest",
+        importlib.import_module("nextgateway.modules.mihomo.router"),
+        "current_mihomo_config_digest",
         lambda: normalized_config_digest(yaml.safe_load(applied.read_text())),
     )
     with make_client(tmp_path / "status.db") as client:
