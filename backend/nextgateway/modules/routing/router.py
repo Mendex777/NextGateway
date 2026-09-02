@@ -23,9 +23,11 @@ from ...schemas import (
     RuleProviderCreate,
     RuleProviderRead,
 )
+from .templates import router as templates_router
 
 router = APIRouter(prefix="/api/v1", tags=["routing"])
 SessionDep = Annotated[Session, Depends(get_session)]
+router.include_router(templates_router)
 
 
 def _group_read(group: ProxyGroup) -> ProxyGroupRead:
