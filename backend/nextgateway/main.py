@@ -15,6 +15,7 @@ from .auth import COOKIE_NAME, token_hash
 from .auth import router as auth_router
 from .db import Base, SessionLocal, engine
 from .models import AuthSession
+from .modules.nodes import router as nodes_router
 from .modules.subscriptions import router as subscriptions_router
 from .services.subscription_manager import refresh_due_subscriptions
 from .settings import settings
@@ -90,6 +91,7 @@ async def authentication(request: Request, call_next):
 
 app.include_router(auth_router)
 app.include_router(router)
+app.include_router(nodes_router)
 app.include_router(subscriptions_router)
 app.include_router(setup_router)
 
