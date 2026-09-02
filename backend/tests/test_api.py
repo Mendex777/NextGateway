@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from nextgateway.db import Base, get_session
 from nextgateway.main import app
+from nextgateway.settings import settings
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -227,7 +228,7 @@ def test_manager_subscription_create_does_not_reopen_setup(tmp_path: Path, monke
         })(),
     )
     secret_root = tmp_path / "subscriptions"
-    monkeypatch.setattr("nextgateway.api.settings.subscription_secret_root", secret_root)
+    monkeypatch.setattr(settings, "subscription_secret_root", secret_root)
     with make_client(tmp_path / "manager-subscription.db") as client:
         client.post("/api/v1/setup/reopen")
         before = client.get("/api/v1/setup/state").json()
