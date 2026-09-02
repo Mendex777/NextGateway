@@ -4,8 +4,8 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from nextgateway.db import Base, get_session
 from nextgateway.main import app
+from nextgateway.modules.installation.schemas import EnvironmentRead
 from nextgateway.services.subscription_fetch import SubscriptionResponse
-from nextgateway.setup import EnvironmentRead
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -28,17 +28,31 @@ def test_setup_state_and_validated_plan(tmp_path: Path, monkeypatch) -> None:
         default_gateway="192.168.1.1",
         default_interface="ens18",
     )
-    monkeypatch.setattr("nextgateway.setup._environment", lambda: environment)
+    monkeypatch.setattr("nextgateway.modules.installation.state.environment", lambda: environment)
     monkeypatch.setattr(
-        "nextgateway.setup.settings.subscription_secret_root", tmp_path / "subscriptions"
+        "nextgateway.modules.installation.router.settings.subscription_secret_root",
+        tmp_path / "subscriptions",
     )
-    monkeypatch.setattr("nextgateway.setup.install_mihomo", lambda version: {"version": version})
-    monkeypatch.setattr("nextgateway.setup.begin_network_apply", lambda config: "a" * 32)
-    monkeypatch.setattr("nextgateway.setup.confirm_network_apply", lambda operation_id: None)
-    monkeypatch.setattr("nextgateway.setup.begin_gateway_apply", lambda config: "b" * 32)
-    monkeypatch.setattr("nextgateway.setup.confirm_gateway_apply", lambda operation_id: None)
     monkeypatch.setattr(
-        "nextgateway.setup.fetch_subscription_response",
+        "nextgateway.modules.installation.router.install_mihomo",
+        lambda version: {"version": version},
+    )
+    monkeypatch.setattr(
+        "nextgateway.modules.installation.router.begin_network_apply", lambda config: "a" * 32
+    )
+    monkeypatch.setattr(
+        "nextgateway.modules.installation.router.confirm_network_apply",
+        lambda operation_id: None,
+    )
+    monkeypatch.setattr(
+        "nextgateway.modules.installation.router.begin_gateway_apply", lambda config: "b" * 32
+    )
+    monkeypatch.setattr(
+        "nextgateway.modules.installation.router.confirm_gateway_apply",
+        lambda operation_id: None,
+    )
+    monkeypatch.setattr(
+        "nextgateway.modules.installation.router.fetch_subscription_response",
         lambda url: SubscriptionResponse(
             content=base64.b64encode(
                 b"vless://11111111-1111-4111-8111-111111111111@example.com:443"
@@ -47,9 +61,18 @@ def test_setup_state_and_validated_plan(tmp_path: Path, monkeypatch) -> None:
             headers={"profile-title": "Test VPN"},
         ),
     )
-    monkeypatch.setattr("nextgateway.setup.begin_mihomo_apply", lambda config, timeout: "c" * 32)
-    monkeypatch.setattr("nextgateway.setup.confirm_mihomo_apply", lambda operation_id: None)
-    monkeypatch.setattr("nextgateway.setup.install_zashboard", lambda version: {"version": version})
+    monkeypatch.setattr(
+        "nextgateway.modules.installation.router.begin_mihomo_apply",
+        lambda config, timeout: "c" * 32,
+    )
+    monkeypatch.setattr(
+        "nextgateway.modules.installation.router.confirm_mihomo_apply",
+        lambda operation_id: None,
+    )
+    monkeypatch.setattr(
+        "nextgateway.modules.installation.router.install_zashboard",
+        lambda version: {"version": version},
+    )
     app.dependency_overrides[get_session] = override_session
     with TestClient(app) as client:
         initial = client.get("/api/v1/setup/state")

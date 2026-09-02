@@ -27,7 +27,7 @@ def test_zashboard_route_is_registered_before_runtime_install() -> None:
 
 def test_setup_can_be_reopened_without_blocking_manager(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "nextgateway.setup._environment",
+        "nextgateway.modules.installation.state.environment",
         lambda: {
             "os": "Test OS",
             "interfaces": ["eth0"],
@@ -212,7 +212,7 @@ def test_mihomo_status_reports_incomplete_initial_config(tmp_path: Path) -> None
 
 
 def test_manager_subscription_create_does_not_reopen_setup(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("nextgateway.setup._environment", lambda: {
+    monkeypatch.setattr("nextgateway.modules.installation.state.environment", lambda: {
         "os": "Test OS", "interfaces": ["eth0"],
         "addresses": {"eth0": ["192.0.2.2/24"]},
         "default_gateway": "192.0.2.1", "default_interface": "eth0",
